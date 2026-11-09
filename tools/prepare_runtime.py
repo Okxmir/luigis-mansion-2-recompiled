@@ -116,12 +116,20 @@ def prepare(upstream, output):
         ("void end_draw();", """struct NativeVertices {
     uint32_t *attributes;
     uint32_t *indices;
+    bool raw;
+};
+struct RawVertexInput {
+    const uint8_t *data = nullptr;
+    uint32_t bytes = 0, stride = 0;
+    uint16_t formats[16]{}; // byte offset, element type, component count
 };
 NativeVertices begin_native_vertices(uint32_t vertex_count, uint32_t index_count, uint32_t attribute_count,
-                                    const uint32_t semantic_map[24]);
+                                    const uint32_t semantic_map[24], uint64_t revision, const RawVertexInput &raw);
+uint32_t *begin_indexed_vertices(const Vertex *shaded, uint32_t vertex_count, uint32_t index_count);
 void end_draw();"""),
     ])
     change(gpu, [
+        ('#include "gpu.h"\n', '#include "gpu.h"\n#include "pica_shader_spirv.h"\n'),
         ('#include "shaders.inc"', """#include "shaders.inc"
 #ifdef LGM2_GPU_VERTEX_SHADER
 #include "lm2_gpu_vertex.inc"
@@ -138,23 +146,62 @@ SDL_GPUTextureFormat surface_depth_format(uint32_t guest_format) {
         ("    s->tex = depth ? make_texture(s->tw, s->th, depth_format, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)",
          "    s->tex = depth ? make_texture(s->tw, s->th, surface_depth_format(format), SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)"),
         ("stencil_zfail, stencil_zpass, stencil_read, stencil_write, has_depth, wdepth, pad[2];",
-         "stencil_zfail, stencil_zpass, stencil_read, stencil_write, has_depth, wdepth, depth_format, native_cull;"),
+         """stencil_zfail, stencil_zpass, stencil_read, stencil_write, has_depth, wdepth, depth_format, cull;
+    uint8_t native, pad[3];"""),
         ("    info.vertex_shader = vs_pica, info.fragment_shader =",
-         "    info.vertex_shader = k.native_cull ? vs_native : vs_pica;\n    info.fragment_shader ="),
+         """    info.vertex_shader = k.native ? vs_native : vs_pica;
+#ifdef LGM2_GPU_SPECIALIZED
+    if (k.native > 1) info.vertex_shader = get_spirv_vertex_shader(k.native);
+#endif
+    info.fragment_shader ="""),
+        ('    if (!p) fatal("GPU pipeline: %s", SDL_GetError());',
+         """    if (!p && k.native > 1) {
+        LOG("gpu: specialized vertex pipeline unavailable: %s", SDL_GetError());
+        pipelines[key] = nullptr;
+        return nullptr;
+    }
+    if (!p) fatal("GPU pipeline: %s", SDL_GetError());"""),
+        ("    SDL_GPUVertexAttribute attrs[6];", "    SDL_GPUVertexAttribute attrs[16];"),
         ("""    info.vertex_input_state.vertex_buffer_descriptions = &vb;
     info.vertex_input_state.num_vertex_buffers = 1;
     info.vertex_input_state.vertex_attributes = attrs;
     info.vertex_input_state.num_vertex_attributes = 6;""",
-         """    if (!k.native_cull) {
+         """    if (!k.native) {
         info.vertex_input_state.vertex_buffer_descriptions = &vb;
         info.vertex_input_state.num_vertex_buffers = 1;
         info.vertex_input_state.vertex_attributes = attrs;
         info.vertex_input_state.num_vertex_attributes = 6;
-    }"""),
+    }
+#ifdef LGM2_GPU_SPECIALIZED
+    if (k.native > 1) {
+        const auto &layout = get_spirv_vertex_layout(k.native);
+        if (layout.stride) {
+            static constexpr SDL_GPUVertexElementFormat floats[] = {
+                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4
+            };
+            static constexpr SDL_GPUVertexElementFormat integers[][2] = {
+                {SDL_GPU_VERTEXELEMENTFORMAT_BYTE2, SDL_GPU_VERTEXELEMENTFORMAT_BYTE4},
+                {SDL_GPU_VERTEXELEMENTFORMAT_UBYTE2, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4},
+                {SDL_GPU_VERTEXELEMENTFORMAT_SHORT2, SDL_GPU_VERTEXELEMENTFORMAT_SHORT4}
+            };
+            vb.pitch = layout.stride;
+            for (uint32_t i = 0; i < layout.inputs; ++i) {
+                const uint32_t value = layout.formats[i], type = (value >> 8) & 3, count = value >> 10;
+                const auto format = type == 3 ? floats[count - 1] : integers[type][count > 2];
+                attrs[i] = {i, 0, format, value & 255};
+            }
+            info.vertex_input_state.vertex_buffer_descriptions = &vb;
+            info.vertex_input_state.num_vertex_buffers = 1;
+            info.vertex_input_state.vertex_attributes = attrs;
+            info.vertex_input_state.num_vertex_attributes = layout.inputs;
+        }
+    }
+#endif"""),
         ("    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE; // culled per triangle on the CPU",
-         """    info.rasterizer_state.cull_mode = k.native_cull >= 2 ? SDL_GPU_CULLMODE_BACK : SDL_GPU_CULLMODE_NONE;
-    info.rasterizer_state.front_face = k.native_cull == 2 ? SDL_GPU_FRONTFACE_CLOCKWISE
-                                                          : SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;"""),
+         """    info.rasterizer_state.cull_mode = k.cull ? SDL_GPU_CULLMODE_BACK : SDL_GPU_CULLMODE_NONE;
+    info.rasterizer_state.front_face = k.cull == 1 ? SDL_GPU_FRONTFACE_CLOCKWISE
+                                                  : SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;"""),
         ("struct DrawRec {", """struct NativeUniforms {
     float depth[4], viewport[4];
     uint32_t attributes[4], program[4], uniforms[4];
@@ -163,10 +210,11 @@ static_assert(sizeof(NativeUniforms) == 80);
 
 struct DrawRec {
     PipelineKey key;
-    bool native;
+    bool native, indexed, raw;
+    uint32_t first_index;
     NativeUniforms native_uniforms;"""),
         ("std::vector<DrawRec> batch;", """std::vector<DrawRec> batch;
-std::vector<uint32_t> native_data, native_indices;
+std::vector<uint32_t> native_data, batch_indices;
 uint32_t native_code, native_swizzle;
 bool native_program_cached = false;
 
@@ -177,26 +225,26 @@ uint32_t append_native(const void *source, size_t words) {
     return uint32_t(begin * sizeof(uint32_t));
 }
 
-void upload_native(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **data, SDL_GPUBuffer **indices) {
-    if (native_indices.empty()) return;
+void upload_indexed(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **data, SDL_GPUBuffer **indices) {
+    if (batch_indices.empty()) return;
     const uint32_t data_bytes = uint32_t(native_data.size() * sizeof(uint32_t));
-    const uint32_t index_bytes = uint32_t(native_indices.size() * sizeof(uint32_t));
+    const uint32_t index_bytes = uint32_t(batch_indices.size() * sizeof(uint32_t));
     SDL_GPUTransferBufferCreateInfo transfer_info{SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, data_bytes + index_bytes, 0};
     SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(dev, &transfer_info);
-    SDL_GPUBufferCreateInfo data_info{SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, data_bytes, 0};
+    SDL_GPUBufferCreateInfo data_info{SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ | SDL_GPU_BUFFERUSAGE_VERTEX, data_bytes, 0};
     SDL_GPUBufferCreateInfo index_info{SDL_GPU_BUFFERUSAGE_INDEX, index_bytes, 0};
-    *data = SDL_CreateGPUBuffer(dev, &data_info);
+    if (data_bytes) *data = SDL_CreateGPUBuffer(dev, &data_info);
     *indices = SDL_CreateGPUBuffer(dev, &index_info);
-    if (!transfer || !*data || !*indices) fatal("GPU vertex buffers: %s", SDL_GetError());
+    if (!transfer || (data_bytes && !*data) || !*indices) fatal("GPU vertex buffers: %s", SDL_GetError());
     auto *mapped = static_cast<uint8_t *>(SDL_MapGPUTransferBuffer(dev, transfer, false));
     if (!mapped) fatal("GPU vertex upload mapping: %s", SDL_GetError());
-    std::memcpy(mapped, native_data.data(), data_bytes);
-    std::memcpy(mapped + data_bytes, native_indices.data(), index_bytes);
+    if (data_bytes) std::memcpy(mapped, native_data.data(), data_bytes);
+    std::memcpy(mapped + data_bytes, batch_indices.data(), index_bytes);
     SDL_UnmapGPUTransferBuffer(dev, transfer);
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTransferBufferLocation data_source{transfer, 0}, index_source{transfer, data_bytes};
     SDL_GPUBufferRegion data_dest{*data, 0, data_bytes}, index_dest{*indices, 0, index_bytes};
-    SDL_UploadToGPUBuffer(copy, &data_source, &data_dest, false);
+    if (data_bytes) SDL_UploadToGPUBuffer(copy, &data_source, &data_dest, false);
     SDL_UploadToGPUBuffer(copy, &index_source, &index_dest, false);
     SDL_EndGPUCopyPass(copy);
     SDL_ReleaseGPUTransferBuffer(dev, transfer);
@@ -220,20 +268,45 @@ void upload_native(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **data, SDL_GPUBuffe
 #endif
     if (!fs_blit)
         fs_blit = make_shader(SPIRV_blit_lcd_frag, sizeof SPIRV_blit_lcd_frag, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);"""),
-        ("    d.pipeline = pipeline(k);", "    d.key = k;\n    d.pipeline = pipeline(k);"),
+        ("    d.pipeline = pipeline(k);", "    d.key = k;"),
         ("void end_draw() {\n    if (cur_skip) return;",
          """NativeVertices begin_native_vertices(uint32_t vertex_count, uint32_t index_count, uint32_t attribute_count,
-                                    const uint32_t semantic_map[24]) {
-    if (!vs_native || cur_skip || interp_wanted || cur_ky != 1.0f || hud_scale() < 1.0f) return {};
+                                    const uint32_t semantic_map[24], uint64_t revision, const RawVertexInput &raw) {
+    static const bool cpu_only = std::getenv("LGM2_CPU_VERTEX") || std::getenv("LGM2_INTERPRET_VERTEX");
+    if (cpu_only || cur_skip || interp_on || interp_wanted || cur_ky != 1.0f || hud_scale() < 1.0f) return {};
+    uint8_t native = vs_native ? 1 : 0;
+    bool use_raw = false;
+#ifdef LGM2_GPU_SPECIALIZED
+    if (!native && vertex_count >= 256) {
+        const uint64_t inputs = regs[VS_INPUT_MAP_LO] | (uint64_t(regs[VS_INPUT_MAP_HI]) << 32);
+        VertexShaderLayout layout{attribute_count, inputs, {}};
+        std::copy_n(semantic_map, layout.semantics.size(), layout.semantics.begin());
+        layout.stride = raw.stride;
+        std::copy_n(raw.formats, layout.formats.size(), layout.formats.begin());
+        native = find_spirv_vertex_shader(dev, vs, regs[VS_ENTRY] & 0xffff, revision, layout);
+        use_raw = native && layout.stride;
+        if (!native && layout.stride) {
+            layout.stride = 0;
+            layout.formats = {};
+            native = find_spirv_vertex_shader(dev, vs, regs[VS_ENTRY] & 0xffff, revision, layout);
+        }
+    }
+#endif
+    if (!native) return {};
+    PipelineKey key = cur.key;
+    key.native = native;
+    key.cull = cur_cull <= 2 ? uint8_t(cur_cull) : 0;
+    SDL_GPUGraphicsPipeline *native_pipeline = pipeline(key);
+    if (!native_pipeline) return {};
     NativeUniforms &u = cur.native_uniforms;
     std::memcpy(u.depth, cur.depth_map, sizeof(u.depth));
     u.viewport[0] = cur_refit ? refit_ax : 1.0f;
     u.viewport[1] = cur_refit ? refit_bx : 0.0f;
     u.viewport[2] = cur_refit ? refit_ay : 1.0f;
     u.viewport[3] = cur_refit ? refit_by : 0.0f;
-    if (!native_program_cached ||
+    if (native == 1 && (!native_program_cached ||
         std::memcmp(native_data.data() + native_code / 4, vs.code, sizeof(vs.code)) ||
-        std::memcmp(native_data.data() + native_swizzle / 4, vs.swizzle, sizeof(vs.swizzle))) {
+        std::memcmp(native_data.data() + native_swizzle / 4, vs.swizzle, sizeof(vs.swizzle)))) {
         native_code = append_native(vs.code, std::size(vs.code));
         native_swizzle = append_native(vs.swizzle, std::size(vs.swizzle));
         native_program_cached = true;
@@ -242,38 +315,82 @@ void upload_native(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **data, SDL_GPUBuffe
     u.program[1] = native_swizzle;
     u.program[2] = append_native(vs.f, sizeof(vs.f) / 4);
     u.program[3] = regs[VS_ENTRY] & 0xffff;
-    u.uniforms[0] = append_native(vs.i, sizeof(vs.i) / 4);
+    u.uniforms[0] = native == 1 ? append_native(vs.i, sizeof(vs.i) / 4) : 0;
     u.uniforms[1] = vs.b;
-    u.uniforms[2] = append_native(semantic_map, 24);
-    u.attributes[0] = append_native(nullptr, size_t(vertex_count) * attribute_count * 4);
+    u.uniforms[2] = native == 1 ? append_native(semantic_map, 24) : 0;
+    if (use_raw) {
+        u.attributes[0] = append_native(nullptr, (size_t(raw.bytes) + 15) / 16 * 4);
+        std::memcpy(native_data.data() + u.attributes[0] / 4, raw.data, raw.bytes);
+    } else {
+        u.attributes[0] = append_native(nullptr, size_t(vertex_count) * attribute_count * 4);
+    }
     u.attributes[1] = attribute_count;
     u.attributes[2] = regs[VS_INPUT_MAP_LO];
     u.attributes[3] = regs[VS_INPUT_MAP_HI];
     cur.native = true;
-    cur.key.native_cull = cur_cull == 1 || cur_cull == 2 ? uint8_t(cur_cull + 1) : 1;
-    cur.pipeline = pipeline(cur.key);
-    cur.first = uint32_t(native_indices.size());
+    cur.indexed = true;
+    cur.raw = use_raw;
+    cur.key = key;
+    cur.pipeline = native_pipeline;
+    cur.first_index = uint32_t(batch_indices.size());
     cur.count = index_count;
-    native_indices.resize(native_indices.size() + index_count);
-    return {native_data.data() + u.attributes[0] / 4, native_indices.data() + cur.first};
+    batch_indices.resize(batch_indices.size() + index_count);
+    return {native_data.data() + u.attributes[0] / 4, batch_indices.data() + cur.first_index, use_raw};
+}
+
+uint32_t *begin_indexed_vertices(const Vertex *shaded, uint32_t vertex_count, uint32_t index_count) {
+    static const bool expanded = std::getenv("LGM2_EXPANDED_VERTICES") != nullptr;
+    if (expanded || cur_skip || interp_on || interp_wanted || cur_ky != 1.0f || hud_scale() < 1.0f) return nullptr;
+    // Store each transformed vertex once. Vulkan assembles and culls the triangle list.
+    cur.indexed = true;
+    cur.key.cull = cur_cull <= 2 ? uint8_t(cur_cull) : 0;
+    cur.pipeline = pipeline(cur.key);
+    cur.first = uint32_t(vertices.size());
+    cur.first_index = uint32_t(batch_indices.size());
+    cur.count = index_count;
+    vertices.resize(vertices.size() + vertex_count);
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+        const float *a = shaded[i].a;
+        GpuVertex &g = vertices[cur.first + i];
+        std::memcpy(g.pos, a + POS, sizeof(g.pos));
+        if (cur_refit) {
+            g.pos[0] = refit_ax * g.pos[0] + refit_bx * g.pos[3];
+            g.pos[1] = refit_ay * g.pos[1] + refit_by * g.pos[3];
+        }
+        std::memcpy(g.color, a + COLOR, sizeof(g.color));
+        std::memcpy(g.quat, a + QUAT, sizeof(g.quat));
+        g.tc01[0] = a[TEX0], g.tc01[1] = a[TEX0 + 1], g.tc01[2] = a[TEX1], g.tc01[3] = a[TEX1 + 1];
+        g.tc2w[0] = a[TEX2], g.tc2w[1] = a[TEX2 + 1], g.tc2w[2] = a[TEX0_W], g.tc2w[3] = 0;
+        g.view[0] = a[VIEW], g.view[1] = a[VIEW + 1], g.view[2] = a[VIEW + 2], g.view[3] = 0;
+    }
+    batch_indices.resize(batch_indices.size() + index_count);
+    return batch_indices.data() + cur.first_index;
 }
 
 void end_draw() {
     if (cur_skip) return;
-    if (cur.native) {
+    if (cur.indexed) {
         batch.push_back(cur);
         return;
     }"""),
+        ("        cur.tris = cur_tris, cur.match = match_key(cur);\n        batch.push_back(cur);",
+         "        cur.pipeline = pipeline(cur.key);\n        cur.tris = cur_tris, cur.match = match_key(cur);\n        batch.push_back(cur);"),
         ("    if (!vbuf) batch.clear(); // out of GPU memory: this batch is lost",
          """    SDL_GPUBuffer *native_buffer = nullptr, *index_buffer = nullptr;
-    upload_native(cmd, &native_buffer, &index_buffer);"""),
+    upload_indexed(cmd, &native_buffer, &index_buffer);"""),
         ("    for (const DrawRec &d : batch) {\n        begin_render_pass",
          "    for (const DrawRec &d : batch) {\n        if (!d.native && !vbuf) continue;\n        begin_render_pass"),
         ("        SDL_GPUBufferBinding vb{vbuf, 0};\n        SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);",
-         """        if (d.native) {
+         """        if (d.indexed) {
             SDL_GPUBufferBinding ib{index_buffer, 0};
             SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        }
+        if (d.native) {
             SDL_BindGPUVertexStorageBuffers(pass, 0, &native_buffer, 1);
+            if (d.raw) {
+                SDL_GPUBufferBinding vb{native_buffer, d.native_uniforms.attributes[0]};
+                SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+            }
         } else {
             SDL_GPUBufferBinding vb{vbuf, 0};
             SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
@@ -284,9 +401,12 @@ void end_draw() {
          """        SDL_PushGPUFragmentUniformData(cmd, 0, &d.fu, sizeof d.fu);
         if (d.native) {
             SDL_PushGPUVertexUniformData(cmd, 0, &d.native_uniforms, sizeof(d.native_uniforms));
-            SDL_DrawGPUIndexedPrimitives(pass, d.count, 1, d.first, 0, 0);
         } else {
             SDL_PushGPUVertexUniformData(cmd, 0, d.depth_map, sizeof d.depth_map);
+        }
+        if (d.indexed) {
+            SDL_DrawGPUIndexedPrimitives(pass, d.count, 1, d.first_index, d.native ? 0 : int32_t(d.first), 0);
+        } else {
             SDL_DrawGPUPrimitives(pass, d.count, 1, d.first, 0);
         }"""),
         ("    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);\n    batch.clear();",
@@ -294,7 +414,7 @@ void end_draw() {
     if (native_buffer) SDL_ReleaseGPUBuffer(dev, native_buffer);
     if (index_buffer) SDL_ReleaseGPUBuffer(dev, index_buffer);
     native_data.clear();
-    native_indices.clear();
+    batch_indices.clear();
     native_program_cached = false;
     batch.clear();"""),
         ("    info.target_info.depth_stencil_format = depth_format;",
@@ -431,7 +551,113 @@ void end_draw() {
     ])
     pica = src / "video" / "pica.cpp"
     change(pica, [
-        ("if (lanes == 1 || count < 64)", "if (lanes == 1 || count < 256)"),
+        ('#include "gpu/gpu.h"\n', '#include "gpu/gpu.h"\n#include "pica_shader_jit.h"\n'),
+        ("#include <condition_variable>\n", "#include <atomic>\n"),
+        ("ShaderSetup vs;", "ShaderSetup vs;\nstatic uint64_t shader_revision = 0;"),
+        ("    uint32_t stride, type, count;", "    uint32_t stride, type, count, address;"),
+        ("                attrs[attr] = {nullptr, stride, type, count};\n                uint32_t addr = base + r[0] + offset;",
+         "                uint32_t addr = base + r[0] + offset;\n                attrs[attr] = {nullptr, stride, type, count, addr};"),
+        ("    void read(uint32_t index, Vec4 out[16]) const {",
+         """    gpu::RawVertexInput raw_input(uint32_t first, uint32_t last, uint32_t count) const {
+        gpu::RawVertexInput raw;
+        if (!count || count > attr_count || count > 12 || (((1u << count) - 1) & fixed_mask)) return raw;
+        const uint32_t stride = attrs[0].stride;
+        if (!stride || (stride & 3)) return raw;
+        uint32_t base = attrs[0].address;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!attrs[i].data || attrs[i].stride != stride) return raw;
+            base = std::min(base, attrs[i].address);
+        }
+        if (base & 3) return raw;
+        uint32_t tail = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            const auto &attr = attrs[i];
+            const uint32_t size = attr_type_size(attr.type), offset = attr.address - base;
+            const uint32_t width = attr.type == 3 ? attr.count : attr.count <= 2 ? 2 : 4;
+            if (offset >= stride || offset + width * size > stride || (offset & (size - 1))) return {};
+            raw.formats[i] = uint16_t(offset | (attr.type << 8) | (attr.count << 10));
+            tail = std::max(tail, offset + width * size);
+        }
+        const uint64_t start = uint64_t(base) + uint64_t(first) * stride;
+        const uint64_t bytes = uint64_t(last - first) * stride + tail;
+        if (start + bytes > UINT32_MAX) return {};
+        raw.data = phys(uint32_t(start), uint32_t(bytes));
+        if (!raw.data) return {};
+        raw.bytes = uint32_t(bytes);
+        raw.stride = stride;
+        return raw;
+    }
+
+    void read(uint32_t index, Vec4 out[16]) const {"""),
+        ("            vs.code[at & 4095] = value;",
+         """            auto &word = vs.code[at & 4095];
+            if (word != value) ++shader_revision;
+            word = value;"""),
+        ("            vs.swizzle[at & 127] = value;",
+         """            auto &word = vs.swizzle[at & 127];
+            if (word != value) ++shader_revision;
+            word = value;"""),
+        ("    OutputMap map;\n", """    OutputMap map;
+    auto cpu_shader = [&]() -> CompiledVertex {
+#ifdef LGM2_VERTEX_JIT
+        static const bool interpret = std::getenv("LGM2_INTERPRET_VERTEX") != nullptr;
+        if (!interpret) return find_compiled_shader(vs, map.entry, shader_revision);
+#endif
+        return nullptr;
+    };
+"""),
+        ("shaded[k] = shade(attrs, map);", "shaded[k] = shade(attrs, map, compiled);"),
+        ("e.v = shade(attrs, map);", "e.v = shade(attrs, map, compiled);"),
+        ("Vertex v = shade(attrs, map);", "Vertex v = shade(attrs, map, compiled);"),
+        (span(pica, "        if (lanes == 1 || count < 64)", "    void slice("),
+         """        if (lanes == 1 || count < 256) return fn(0, count);
+        job = &fn;
+        job_count = count;
+        pending.store(lanes - 1, std::memory_order_relaxed);
+        generation.fetch_add(1, std::memory_order_release);
+        generation.notify_all();
+        slice(0, fn, count);
+        for (int left = pending.load(std::memory_order_acquire); left;
+             left = pending.load(std::memory_order_acquire)) {
+            pending.wait(left, std::memory_order_acquire);
+        }
+    }
+
+private:
+    int lanes = 1;
+    std::atomic<int> pending{0};
+    std::atomic<uint64_t> generation{0};
+    size_t job_count = 0;
+    const std::function<void(size_t, size_t)> *job = nullptr;
+
+"""),
+        (span(pica, "        uint64_t seen = 0;", "\n};\n\nWorkers &workers"),
+         """        uint64_t seen = 0;
+        for (;;) {
+            generation.wait(seen, std::memory_order_acquire);
+            seen = generation.load(std::memory_order_acquire);
+            slice(lane, *job, job_count);
+            if (pending.fetch_sub(1, std::memory_order_acq_rel) == 1) pending.notify_one();
+        }
+    }"""),
+        (span(pica, "            Vec4 v = {{0, 0, 0, 1}};", "            out[i] = v;"),
+         """            Vec4 v = {{0, 0, 0, 1}};
+            const uint8_t *p = a.data + size_t(index) * a.stride;
+            switch (a.type) {
+            case 0:
+                for (uint32_t c = 0; c < a.count; ++c) v[c] = float(int8_t(p[c]));
+                break;
+            case 1:
+                for (uint32_t c = 0; c < a.count; ++c) v[c] = float(p[c]);
+                break;
+            case 2:
+                for (uint32_t c = 0; c < a.count; ++c) v[c] = float(int16_t(load16(p + 2 * c)));
+                break;
+            default:
+                std::memcpy(v.v, p, a.count * sizeof(float));
+                break;
+            }
+"""),
         (span(pica, "struct OutputMap {", "    // colors are clamped"),
          """struct OutputMap {
     struct Component {
@@ -464,10 +690,15 @@ void end_draw() {
     }
 };
 
-Vertex shade(const Vec4 attrs[16], const OutputMap &map) {
+Vertex shade(const Vec4 attrs[16], const OutputMap &map, CompiledVertex compiled = nullptr) {
     Vec4 in[16] = {}, out[16] = {};
     for (uint32_t i = 0; i < map.input_count; ++i) in[map.input_map[i]] = attrs[i];
-    run_shader(vs, map.entry, in, out);
+    if (compiled) {
+        Vec4 scratch[16];
+        compiled(vs.f, in, out, scratch);
+    } else {
+        run_shader(vs, map.entry, in, out);
+    }
 
     Vertex v{};
     for (uint32_t i = 0; i < map.output_count; ++i) {
@@ -477,26 +708,83 @@ Vertex shade(const Vec4 attrs[16], const OutputMap &map) {
 """),
         ("            Vec4 attrs[16];", "            Vec4 attrs[16]{};"),
         ("        Vec4 attrs[16];\n        for (uint32_t i", "        Vec4 attrs[16]{};\n        for (uint32_t i"),
+        ("    auto index_at = [&](uint32_t i) {\n        return indexed ? (wide ? load16(indices + 2 * i) : indices[i])",
+         "    auto index_at = [&](const uint8_t *source, uint32_t i) {\n        return indexed ? (wide ? load16(source + 2 * i) : source[i])"),
+        (span(pica, "        static std::vector<int32_t> slot;", "        shaded.resize(unique.size());"),
+         """        struct IndexList {
+            const uint8_t *source = nullptr;
+            uint32_t first = 0, last = 0;
+            std::vector<uint8_t> bytes;
+            std::vector<uint32_t> unique, remapped;
+        };
+        static IndexList cache[64], scratch;
+        static std::vector<int32_t> slot;
+        static std::vector<Vertex> shaded;
+        const bool cacheable = indexed && n <= 65536;
+        const uintptr_t address = reinterpret_cast<uintptr_t>(indices);
+        IndexList &list = cacheable ? cache[((address >> 3) ^ (address >> 12) ^ n) & 63] : scratch;
+        const size_t bytes = n * size_t(wide ? 2 : 1);
+        if (!cacheable || list.source != indices || list.remapped.size() != n || list.bytes.size() != bytes ||
+            std::memcmp(list.bytes.data(), indices, bytes)) {
+            if (cacheable) {
+                list.bytes.assign(indices, indices + bytes);
+                list.source = indices;
+            }
+            list.unique.clear();
+            list.remapped.resize(n);
+            const uint8_t *source = cacheable ? list.bytes.data() : indices;
+            list.first = UINT32_MAX;
+            list.last = 0;
+            for (uint32_t i = 0; i < n; ++i) {
+                uint32_t index = index_at(source, i);
+                if (index >= slot.size()) slot.resize(index + 1, -1);
+                if (slot[index] < 0) {
+                    slot[index] = int32_t(list.unique.size());
+                    list.unique.push_back(index);
+                    list.first = std::min(list.first, index);
+                    list.last = std::max(list.last, index);
+                }
+                list.remapped[i] = uint32_t(slot[index]);
+            }
+            for (uint32_t index : list.unique) slot[index] = -1;
+        }
+        const auto &unique = list.unique;
+"""),
         ("        shaded.resize(unique.size());", """        uint32_t topology = (regs[PRIMITIVE_CONFIG] >> 8) & 3;
-        if (gpu::active() && indexed && !deferring && draw_log_state == 0 &&
-            (topology == 0 || topology == 3) && assembler.list_count == 0 && n % 3 == 0) {
+        const bool indexed_list = gpu::active() && indexed && !deferring && draw_log_state == 0 &&
+            (topology == 0 || topology == 3) && assembler.list_count == 0 && n % 3 == 0;
+        if (indexed_list) {
             uint32_t semantics[SEMANTIC_COUNT];
             std::fill(std::begin(semantics), std::end(semantics), UINT32_MAX);
             for (uint32_t i = 0; i < map.output_count; ++i) {
                 const auto &component = map.components[i];
                 semantics[component.semantic] = 4u * component.reg + component.lane;
             }
-            auto draw = gpu::begin_native_vertices(uint32_t(unique.size()), n, map.input_count, semantics);
+            gpu::RawVertexInput raw;
+#ifdef LGM2_GPU_SPECIALIZED
+            static const bool raw_vertices = !std::getenv("LGM2_UNPACK_VERTEX_INPUTS") && !std::getenv("LGM2_CPU_VERTEX")
+                && !std::getenv("LGM2_INTERPRET_VERTEX") && !std::getenv("LGM2_GPU_VERTICES");
+            if (raw_vertices) raw = loader.raw_input(list.first, list.last, map.input_count);
+#endif
+            auto draw = gpu::begin_native_vertices(uint32_t(unique.size()), n, map.input_count, semantics, shader_revision, raw);
             if (draw.attributes) {
-                for (uint32_t i = 0; i < n; ++i) draw.indices[i] = uint32_t(slot[index_at(i)]);
-                workers().run(unique.size(), [&](size_t begin, size_t end) {
-                    Vec4 attrs[16]{};
-                    for (size_t i = begin; i < end; ++i) {
-                        loader.read(unique[i], attrs);
-                        std::memcpy(draw.attributes + i * map.input_count * 4, attrs, map.input_count * sizeof(Vec4));
+                if (draw.raw) {
+                    if (cacheable) {
+                        const uint8_t *snapshot = list.bytes.data();
+                        for (uint32_t i = 0; i < n; ++i) draw.indices[i] = index_at(snapshot, i) - list.first;
+                    } else {
+                        for (uint32_t i = 0; i < n; ++i) draw.indices[i] = unique[list.remapped[i]] - list.first;
                     }
-                });
-                for (uint32_t index : unique) slot[index] = -1;
+                } else {
+                    std::memcpy(draw.indices, list.remapped.data(), n * sizeof(uint32_t));
+                    workers().run(unique.size(), [&](size_t begin, size_t end) {
+                        Vec4 attrs[16]{};
+                        for (size_t i = begin; i < end; ++i) {
+                            loader.read(unique[i], attrs);
+                            std::memcpy(draw.attributes + i * map.input_count * 4, attrs, map.input_count * sizeof(Vec4));
+                        }
+                    });
+                }
                 time_vertices += std::chrono::duration_cast<std::chrono::nanoseconds>(
                                      std::chrono::steady_clock::now() - t_shade).count();
                 vertex_count += n;
@@ -505,7 +793,20 @@ Vertex shade(const Vec4 attrs[16], const OutputMap &map) {
                 return;
             }
         }
+        const auto compiled = cpu_shader();
         shaded.resize(unique.size());"""),
+        ("        for (uint32_t i = 0; i < n; i++) assembler.push(shaded[size_t(slot[index_at(i)])]);",
+         """        auto *draw_indices = indexed_list ? gpu::begin_indexed_vertices(shaded.data(), uint32_t(shaded.size()), n)
+                                          : nullptr;
+        if (draw_indices) {
+            std::memcpy(draw_indices, list.remapped.data(), n * sizeof(uint32_t));
+        } else {
+            for (uint32_t position : list.remapped) assembler.push(shaded[position]);
+        }"""),
+        ("        for (uint32_t index : unique) slot[index] = -1;\n    } else {", "    } else {"),
+        ("            uint32_t index = index_at(i);", "            uint32_t index = index_at(indices, i);"),
+        ("        // indexed draws reuse shaded vertices",
+         "        const auto compiled = cpu_shader();\n        // indexed draws reuse shaded vertices"),
     ])
     shader = src / "video" / "shader.cpp"
     change(shader, [
@@ -524,6 +825,33 @@ Vertex shade(const Vec4 attrs[16], const OutputMap &map) {
         }
 
 """),
+    ])
+    transfer = src / "video" / "transfer.cpp"
+    change(transfer, [
+        ("    auto src_offset = [&](uint32_t x, uint32_t y) {",
+         """    // The game's padded top-screen transfers repeatedly untile 8-bit color.
+    // Horizontal samples are adjacent in Morton order when the first x is even.
+    if (!flip && !tiled_both && !input_linear && scale <= 1 && in_fmt <= FB_RGB8 && out_fmt <= FB_RGB8 &&
+        in_w == out_w && in_h == out_h && !((in_w | in_h) & 7) &&
+        (uintptr_t(src) + uint64_t(in_w) * in_h * ibpp <= uintptr_t(dst) ||
+         uintptr_t(dst) + uint64_t(w) * h * obpp <= uintptr_t(src))) {
+        const uint32_t in_color = ibpp == 4 ? 1 : 0, out_color = obpp == 4 ? 1 : 0;
+        for (uint32_t y = 0; y < h; ++y) {
+            uint8_t *row = dst + size_t(y) * w * obpp;
+            const uint8_t *tiles = src + size_t(tiled_index(0, y, in_w)) * ibpp;
+            for (uint32_t x = 0; x < w; ++x, row += obpp) {
+                const uint32_t ix = x << hs;
+                const uint8_t *p = tiles + size_t((ix & ~7u) * 8 + morton8(ix, 0)) * ibpp;
+                if (out_color) row[0] = in_color ? (scale ? (unsigned(p[0]) + p[ibpp]) >> 1 : p[0]) : 255;
+                for (uint32_t c = 0; c < 3; ++c) {
+                    const auto offset = c + in_color;
+                    row[c + out_color] = scale ? (unsigned(p[offset]) + p[ibpp + offset]) >> 1 : p[offset];
+                }
+            }
+        }
+        return;
+    }
+    auto src_offset = [&](uint32_t x, uint32_t y) {"""),
     ])
     texture = src / "video" / "texture.cpp"
     change(texture, [

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <limits>
 #include <random>
+#include "pica_shader_jit.h"
 
 namespace pica {
 void run_shader_reference(const ShaderSetup &, uint32_t, const Vec4 in[16], Vec4 out[16]);
@@ -17,11 +18,9 @@ using pica::Vec4;
 constexpr uint32_t END = 0x22u << 26;
 constexpr uint32_t IDENTITY = 0x1b;
 constexpr uint32_t MOV = 0x13u << 26;
+unsigned compiled_cases = 0;
 
-bool compare_shader(const ShaderSetup &setup, const Vec4 inputs[16], const char *label) {
-    Vec4 expected[16]{}, result[16]{};
-    pica::run_shader_reference(setup, 0, inputs, expected);
-    pica::run_shader(setup, 0, inputs, result);
+bool compare_outputs(const Vec4 expected[16], const Vec4 result[16], const char *label) {
     for (unsigned reg = 0; reg < 16; ++reg) {
         for (unsigned lane = 0; lane < 4; ++lane) {
             float a = expected[reg][lane], b = result[reg][lane];
@@ -30,6 +29,23 @@ bool compare_shader(const ShaderSetup &setup, const Vec4 inputs[16], const char 
             return false;
         }
     }
+    return true;
+}
+
+bool compare_shader(const ShaderSetup &setup, const Vec4 inputs[16], const char *label) {
+    Vec4 expected[16]{}, result[16]{};
+    pica::run_shader_reference(setup, 0, inputs, expected);
+    pica::run_shader(setup, 0, inputs, result);
+    if (!compare_outputs(expected, result, label)) return false;
+#ifdef LGM2_VERTEX_JIT
+    static uint64_t revision = 0;
+    if (auto compiled = pica::find_compiled_shader(setup, 0, ++revision)) {
+        Vec4 native[16]{}, scratch[16];
+        compiled(setup.f, inputs, native, scratch);
+        ++compiled_cases;
+        return compare_outputs(expected, native, "compiled vertex shader");
+    }
+#endif
     return true;
 }
 } // namespace
@@ -96,5 +112,19 @@ int main() {
     setup.code[2] = END;
     if (!compare_shader(setup, inputs, "loop uniform addressing")) return 1;
     ++cases;
-    std::printf("PICA vertex shader: %u comparisons passed\n", cases);
+
+    // IFC can leave a partially written temporary untouched on one branch.
+    setup.swizzle[1] = (identity & ~15u) | 8;
+    setup.code[0] = (0x2eu << 26) | (1u << 7); // CMP v0.x == v1.x
+    setup.code[1] = (0x28u << 26) | (1u << 25) | (2u << 22) | (3u << 10) | 1;
+    setup.code[2] = MOV | (16u << 21) | 1;
+    setup.code[3] = MOV | (16u << 21) | (1u << 12) | 1;
+    setup.code[4] = MOV | (16u << 12);
+    setup.code[5] = END;
+    for (float value : {2.0f, 3.0f, nan}) {
+        inputs[0][0] = value;
+        if (!compare_shader(setup, inputs, "conditional temporary write")) return 1;
+        ++cases;
+    }
+    std::printf("PICA vertex shader: %u interpreter and %u compiled comparisons passed\n", cases, compiled_cases);
 }

@@ -20,6 +20,16 @@ def byte_array(name, data):
     return f"alignas(4) static constexpr unsigned char {name}[] = {{\n" + "\n".join(rows) + "\n};\n"
 
 
+def specialization_template(source):
+    prefix = source[:source.index("struct ReturnFrame")]
+    prefix = prefix.replace("ByteAddressBuffer Stream", "StructuredBuffer<uint4> Stream")
+    prefix = prefix.replace("asfloat(Stream.Load4(ProgramData.z + uint(index) * 16))",
+                            "asfloat(Stream[(ProgramData.z >> 4) + uint(index)])")
+    suffix = source[source.index("    float4 position ="):]
+    return (f'inline constexpr char LM2_VERTEX_PREFIX[] = R"LM2({prefix})LM2";\n'
+            f'inline constexpr char LM2_VERTEX_SUFFIX[] = R"LM2({suffix})LM2";\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
@@ -32,7 +42,8 @@ def main():
         shader = Path(directory) / "shader.spv"
         vertex = compile_shader(args.compiler, args.vertex, shader, "vs_6_0")
         lcd = compile_shader(args.compiler, args.lcd, shader, "ps_6_0")
-        args.header.write_text(byte_array("LM2_GPU_VERTEX", vertex) + byte_array("LM2_GPU_LCD", lcd), encoding="ascii")
+        args.header.write_text(byte_array("LM2_GPU_VERTEX", vertex) + byte_array("LM2_GPU_LCD", lcd)
+                               + specialization_template(args.vertex.read_text(encoding="ascii")), encoding="ascii")
 
 
 if __name__ == "__main__":

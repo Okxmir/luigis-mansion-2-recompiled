@@ -2,7 +2,7 @@ param(
     [string] $Cartridge,
     [string] $KeyFile,
     [switch] $CodeOnly,
-    [switch] $WithGpuShaders
+    [switch] $WithGpuShaders = $true
 )
 . "$PSScriptRoot/common.ps1"
 
@@ -40,6 +40,10 @@ try {
     $memmap = Get-VerifiedArchive 'memmap2-0.9.11.crate' `
         'https://static.crates.io/crates/memmap2/memmap2-0.9.11.crate' `
         'D1219ED1B7F229EE7104D281DD01D6802FE28BB6E95D292942C4DAACDEB798C0'
+    $xbyakCommit = 'df112862583c2d327c1d9782fd28f53aa675f11d'
+    $xbyak = Get-VerifiedArchive 'xbyak-pinned.zip' `
+        "https://codeload.github.com/herumi/xbyak/zip/$xbyakCommit" `
+        'B0E8D74A5813D4C4D2BAA550B889B7F7C2696E471DFB8DE1554CE47F7E52D7F8'
     $rustVersion = '1.90.0-x86_64-pc-windows-msvc'
     $rustc = Get-VerifiedArchive "rustc-$rustVersion.tar.xz" `
         "https://static.rust-lang.org/dist/rustc-$rustVersion.tar.xz" `
@@ -55,12 +59,17 @@ try {
     if (!(Test-Path -LiteralPath "$upstream/SDL3-3.4.0/cmake/SDL3Config.cmake")) {
         Expand-Archive -LiteralPath $sdl -DestinationPath $upstream -Force
     }
+    if (!(Test-Path -LiteralPath "$upstream/xbyak-$xbyakCommit/xbyak/xbyak.h")) {
+        Expand-Archive -LiteralPath $xbyak -DestinationPath $upstream -Force
+    }
     if ($WithGpuShaders) {
         $dxc = Get-VerifiedArchive 'dxc_2025_07_14.zip' `
             'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip' `
             '9AD895A6B039E3A8F8C22A1009F866800B840A74B50DB9218D13319E215EA8A4'
         $dxcDir = Join-Path $upstream 'dxc-1.8.2505.1'
-        if (!(Test-Path -LiteralPath "$dxcDir/bin/x64/dxc.exe")) {
+        if (!(Test-Path -LiteralPath "$dxcDir/bin/x64/dxc.exe") -or
+            !(Test-Path -LiteralPath "$dxcDir/bin/x64/dxcompiler.dll") -or
+            !(Test-Path -LiteralPath "$dxcDir/inc/dxcapi.h")) {
             Expand-Archive -LiteralPath $dxc -DestinationPath $dxcDir -Force
         }
     }

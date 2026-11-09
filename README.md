@@ -6,9 +6,9 @@ An experimental community port of **Luigi’s Mansion 2** for Windows x64. The p
 
 ## Build and run
 
-Prepare your cartridge image and build the project, then launch `dist/LuigisMansion2.exe`. Vulkan is the default renderer. The software renderer uses Direct3D 11 for display. [Build guide](BUILD.md)
+Prepare your cartridge image and build the project, then launch `dist/LuigisMansion2.exe`. The standard Release build enables Vulkan vertex shader compilation by default. The software renderer uses Direct3D 11 for display. [Build guide](BUILD.md)
 
-Testing reached the garden in mission A-1 and verified movement, the flashlight, and loading an existing profile. The full campaign and multiplayer still need testing. The 60 FPS target remains open. [Test results](PROGRESS.md)
+On the RTX 3080 Ti test system, the Release build reached about 53–54 FPS in the bunker, 54–55 FPS around the front steps, and 55–56 FPS at the garage observation point. The arrival sequence was slower. Testing covered the opening of A-1, movement, flashlight aiming, and loading an existing profile. The 60 FPS target remains open, and the full campaign and multiplayer still need testing. [Test results](PROGRESS.md)
 
 ## Controls
 
