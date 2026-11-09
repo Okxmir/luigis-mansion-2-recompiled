@@ -1,30 +1,30 @@
-# État du portage
+# Port status
 
-## Résultats vérifiés
+## Verified results
 
-- Cartouche européenne détectée et lue dans son emplacement d’origine. La partition exécutable est déchiffrée dans `extracted/LM2-EUR.cxi`. Les tests d’intégrité et l’inventaire sont dans `logs/extraction-integrity.txt` et `logs/extraction.txt`.
-- Traduction statique ARM et Thumb en C, compilation MSVC x64 et chargement des segments de `LM3DS` à partir du CXI. La dernière génération contient 57 971 fonctions.
-- La fonction originale `0x003B4B98` passe 84 comparaisons avec une référence CRC indépendante en Debug et Release. Les cas couvrent quatre alignements, plusieurs longueurs et trois états initiaux. Voir `logs/tests.txt` et `logs/tests-debug.txt`.
-- Exécution du point d’entrée original `0x00100000`. Le premier blocage se situait dans la lecture de l’identité matérielle. La trace `logs/first-sleep.txt` documente la boucle. Le correctif PTM a supprimé ce blocage. L’analyse du démarrage a ensuite identifié un défaut de flot autour d’une trappe conditionnelle.
-- Windows a affiché l’écran titre, la sélection de profil et la cinématique d’introduction via le rendu Vulkan sur la RTX 3080 Ti. Les captures sont dans `logs/mission-control` et `logs/vulkan-check-*.png`.
-- Le jeu a écrit un `profile1.sav` de 3 895 octets dont les deux CRC ont été recalculés avec succès. Le profil existant a été retrouvé dans l’interface au redémarrage et son SHA-256 est resté identique pendant la migration des métadonnées. Voir `logs/resume-check-0.png` et `logs/boot-save-migrate.txt`.
-- La version dans `dist/` a chargé la police et la partition locale depuis leurs emplacements par défaut. Elle a affiché la sélection du Manoir du désespoir et le briefing d’A-1. Voir `logs/mission-run/mission-a1.png` et `logs/mission-final.txt`.
-- Le dernier exécutable dans `dist/` a affiché l’écran titre français avec ses réglages par défaut. Voir `logs/titre-final-0.png` et `logs/packaged-title.txt`.
-- Après recompilation de la routine d’interpolation appelée au début d’A-1, Luigi a atteint le jardin. Les entrées du stick vers l’avant et la droite ont déplacé le personnage et orienté sa lampe. La position a changé sur la carte. Voir `logs/a1-retry/pret.png`, `logs/a1-retry/marche-avant.png`, `logs/a1-retry/marche-droite.png` et `logs/a1-retry/portail.png`.
-- La sortie audio du test graphique contenait des échantillons non nuls à 32 728 Hz, en stéréo. La capture permet d’examiner le signal du mixeur.
-- La commande `scripts/prepare.ps1 -CodeOnly` a reproduit l’extraction et la traduction à partir des dépendances épinglées. Une clé incorrecte est rejetée avant la publication de la partition extraite. L’empreinte de la cartouche originale correspond à celle relevée au départ.
-- L’archive de sauvegarde est verrouillée par instance. Un deuxième lancement sur le même dossier a été refusé par Windows pendant le test, sans interrompre l’instance active. Voir `logs/save-lock-test.txt`.
+- The tools read the European cartridge image from its original location and wrote the decrypted executable partition to `extracted/LM2-EUR.cxi`. The integrity checks and file inventory are in the local logs `logs/extraction-integrity.txt` and `logs/extraction.txt`.
+- The recompiler translates ARM and Thumb to C ahead of time, and MSVC compiles the result for x64. The executable loads the `LM3DS` segments from the CXI. The latest run generated 57,971 functions.
+- The original function at `0x003B4B98` passes 84 comparisons with an independent CRC implementation in both Debug and Release. The cases cover four alignments, several lengths, and three initial states. See `logs/tests.txt` and `logs/tests-debug.txt`.
+- The recompiled program ran the original entry point at `0x00100000`. The first startup stall occurred while reading the hardware identity. The PTM fix resolved the loop recorded in `logs/first-sleep.txt`. Further startup analysis found a control-flow issue involving a conditional trap.
+- Windows displayed the title screen, profile selection, and opening cutscene through Vulkan on an RTX 3080 Ti. See the local captures in `logs/mission-control` and `logs/vulkan-check-*.png`.
+- The game wrote a 3,895-byte `profile1.sav`. Both CRCs were independently recalculated. The existing profile appeared in the menu after restart and retained the same SHA-256 through metadata migration. See `logs/resume-check-0.png` and `logs/boot-save-migrate.txt`.
+- The packaged build in `dist/` loaded the font and local partition from their default locations. It displayed the Gloomy Manor selection screen and the A-1 briefing. See `logs/mission-run/mission-a1.png` and `logs/mission-final.txt`.
+- A packaged build displayed the French title screen with its default settings. See `logs/titre-final-0.png` and `logs/packaged-title.txt`.
+- After the interpolation routine called at the start of A-1 was recompiled, Luigi reached the garden. Forward and right Circle Pad input moved Luigi and aimed his flashlight. His position also changed on the map. See the local captures in `logs/a1-retry/`.
+- The graphical test produced nonzero stereo audio samples at 32,728 Hz. The capture contains the mixer output.
+- `scripts/prepare.ps1 -CodeOnly` reproduced extraction and recompilation with the pinned dependencies. Integrity checks reject an incorrect key before writing the final extracted partition. The original cartridge image matched its initial checksum.
+- Each running instance locks its save directory. During testing, Windows rejected a second launch using the same directory while the first instance continued running. See `logs/save-lock-test.txt`.
 
-## Validation en cours
+## Remaining validation
 
-Les premiers essais Vulkan présentaient des artefacts sur le sol, les marches et la grille du jardin. La première version utilisait le rendu logiciel avec affichage Direct3D 11 pour éviter ces défauts. La fin d’A-1, la sauvegarde de sa progression, les autres missions et ScareScraper restent à valider. Le portage utilise une police système de remplacement.
+Early Vulkan tests showed artifacts on the garden floor, steps, and gate. The first build defaulted to software rendering with Direct3D 11 display to avoid those artifacts. Completing A-1, saving its progress, later missions, and ScareScraper still need testing. The port uses a replacement system font.
 
-## Fluidité du rendu
+## Rendering performance
 
-Le rendu logiciel évite de décoder plusieurs fois les mêmes texels ETC, écarte plus tôt les pixels masqués et réduit les synchronisations entre les tâches de rendu. Le test sur le PC du projet a relevé environ 7 à 9 FPS dans le bunker avant ces changements et 13 à 16 FPS après. Le compteur `YW2_FPS` mesure les nouveaux tampons de l’écran supérieur sur des intervalles d’environ cinq secondes réelles. Les relevés se trouvent dans `logs/fps-cpu-before.txt` et `logs/fps-cpu-after.txt`.
+The software renderer caches decoded ETC texels, rejects occluded fragments earlier, and reduces synchronization between rendering tasks. On the test PC, the bunker ran at about 7–9 FPS before these changes and 13–16 FPS afterward. The `YW2_FPS` counter counts new top-screen buffers over roughly five seconds of wall-clock time. See `logs/fps-cpu-before.txt` and `logs/fps-cpu-after.txt`.
 
-Pendant la séquence d’arrivée en A‑1, les relevés du rendu logiciel se situent autour de 8 à 10 FPS avant et de 9 à 12 FPS après ces changements.
+During the A-1 arrival sequence, software rendering ran at about 8–10 FPS before the changes and 9–12 FPS afterward.
 
-La version Vulkan suivante utilise une profondeur 16 bits quand le jeu demande ce format et lit directement les surfaces de taille native. Le test dans le jardin a affiché le sol et la grille sans les artefacts des premiers essais. Les déplacements et la lampe ont été vérifiés après l’appel du professeur. Voir `logs/fps-gpu-vertices/jardin-pret.png` et `logs/fps-gpu-vertices/jardin-apres.png`. Les calculs de sommets sur le processeur passent 11 778 comparaisons avec l’interpréteur de référence, en plus des 84 tests sur le CRC de sauvegarde.
+The updated Vulkan renderer uses 16-bit depth when the game requests it and reads native-size surfaces directly. In the garden test, the floor and gate rendered cleanly. Movement and flashlight aiming worked after the professor’s call. See the local captures in `logs/fps-gpu-vertices/`. CPU vertex calculations pass 11,778 comparisons with the reference interpreter, alongside the 84 save CRC checks.
 
-Le nouvel exécutable dans `dist` choisit Vulkan par défaut et affiche directement l’écran inférieur en respectant la conversion RGB565. Sur la RTX 3080 Ti du projet, les mesures s’établissent autour de 20 à 23 FPS dans le bunker, de 18 à 19 FPS dans le jardin après l’introduction et de 17 à 18 FPS pendant le déplacement testé. Le mode expérimental `LGM2_GPU_VERTICES=1` a atteint 25 FPS dans le bunker et produit environ 15 FPS pendant le déplacement dans le jardin. La version livrée utilise donc les calculs de sommets x64. Les 60 FPS restent à atteindre. Voir `logs/fps-vulkan-final.txt` et les captures du dossier `logs/fps-vulkan-final/`.
+The current executable in `dist/` defaults to Vulkan and presents the bottom screen directly while preserving RGB565 conversion. On the RTX 3080 Ti test system, it reached about 20–23 FPS in the bunker, 18–19 FPS in the garden after the introduction, and 17–18 FPS while moving through the garden. The experimental `LGM2_GPU_VERTICES=1` mode reached 25 FPS in the bunker and about 15 FPS during garden movement, so the packaged build uses x64 CPU vertex processing. The 60 FPS target remains open. See `logs/fps-vulkan-final.txt` and the local captures in `logs/fps-vulkan-final/`.
