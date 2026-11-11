@@ -12,13 +12,17 @@ On the RTX 3080 Ti test system, the Release build reached about 53–54 FPS in t
 
 ## Controls
 
-| 3DS control | AZERTY keyboard |
-| --- | --- |
-| Circle Pad | ZQSD |
-| A / B / X / Y | K / J / I / U |
-| L / R | Left Shift / E |
-| Start / Select | Enter / Backspace |
-| Touch screen | Click the bottom screen |
+Connect a gamepad recognized by SDL before or during play. The table shows the default bindings.
+
+| 3DS control | AZERTY keyboard | Xbox controller | PlayStation controller |
+| --- | --- | --- | --- |
+| Circle Pad | ZQSD | Left stick | Left stick |
+| A / B / X / Y | K / J / I / U | B / A / Y / X | Circle / Cross / Triangle / Square |
+| L / R | Left Shift / E | LB / RB | L1 / R1 |
+| Start / Select | Enter / Backspace | Menu / View | Options / Share or Create |
+| Touch screen | Click the bottom screen | Move the right stick and press it to touch | Move the right stick and press R3 to touch |
+
+In single-screen mode, click the left stick or press Tab to swap screens.
 
 Save files are stored in `dist/userdata/games/0004000000076500/save`. The program keeps earlier versions in `save-backups`.
 

@@ -46,6 +46,71 @@ def prepare(upstream, output):
         (span(sdl, "    // the launcher, unless", "    if (device && !pica::gpu::init"),
          '    game_path = s.game_path;\n    const std::string game_id = "lm2";\n'),
         (span(sdl, '        LOG("no window', "    s.load();"), '        fatal("SDL initialization failed: %s", SDL_GetError());\n    }\n'),
+        ("SDL_ScaleMode scale_mode() {", """struct GamepadTouch {
+    float x = 0.5f, y = 0.5f;
+    uint64_t last_frame = SDL_GetTicks(), last_active = 0;
+    bool visible = false, pressed = false;
+
+    void update(const std::vector<SDL_Gamepad *> &pads, const Layout &layout, Input &in) {
+        const uint64_t now = SDL_GetTicks();
+        const float seconds = std::min<uint64_t>(now - last_frame, 50) / 1000.0f;
+        last_frame = now;
+        pressed = false;
+        visible = false;
+        if (pads.empty() || !layout.shown[1]) {
+            last_active = 0;
+            return;
+        }
+
+        const auto velocity = [](int value) {
+            constexpr int deadzone = 6000;
+            const int magnitude = std::max(0, std::min(std::abs(value), 32767) - deadzone);
+            return float(value < 0 ? -magnitude : magnitude) / (32767 - deadzone);
+        };
+        float dx = 0, dy = 0;
+        for (SDL_Gamepad *pad : pads) {
+            if (dx == 0 && dy == 0) {
+                dx = velocity(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX));
+                dy = velocity(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY));
+            }
+            pressed |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+        }
+        x = std::clamp(x + dx * seconds, 0.0f, 1.0f);
+        y = std::clamp(y + dy * seconds * BOTTOM_WIDTH / SCREEN_HEIGHT, 0.0f, 1.0f);
+        if (dx != 0 || dy != 0 || pressed) last_active = now;
+        visible = last_active != 0 && now - last_active < 3000;
+
+        if (pressed) {
+            const SDL_FRect &crop = layout.src[1];
+            in.touching = true;
+            in.touch_x = uint16_t(crop.x + x * (crop.w - 1));
+            in.touch_y = uint16_t(crop.y + y * (crop.h - 1));
+        }
+    }
+
+    void draw(SDL_Renderer *renderer, const Layout &layout) const {
+        if (!visible || !layout.shown[1]) return;
+        const SDL_FRect &screen = layout.rect[1];
+        constexpr float size = 8;
+        SDL_FRect marker = {screen.x + x * (screen.w - size), screen.y + y * (screen.h - size), size, size};
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderFillRect(renderer, &marker);
+        marker = {marker.x + 1, marker.y + 1, size - 2, size - 2};
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        if (pressed) SDL_RenderFillRect(renderer, &marker);
+        else SDL_RenderRect(renderer, &marker);
+    }
+};
+
+SDL_ScaleMode scale_mode() {"""),
+        ("    std::vector<SDL_Gamepad *> pads;", "    std::vector<SDL_Gamepad *> pads;\n    GamepadTouch pad_touch;"),
+        ("e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) s.swap_screens",
+         "e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_STICK) s.swap_screens"),
+        ("        for (SDL_Gamepad *g : pads) in.buttons |= gamepad_buttons(g, in.circle_x, in.circle_y);",
+         "        for (SDL_Gamepad *g : pads) in.buttons |= gamepad_buttons(g, in.circle_x, in.circle_y);\n"
+         "        pad_touch.update(pads, layout, in);"),
+        ("        if (!message.empty() && SDL_GetTicks() < message_until)",
+         "        pad_touch.draw(renderer, layout);\n        if (!message.empty() && SDL_GetTicks() < message_until)"),
     ])
     header = frontend / "frontend.h"
     change(header, [
