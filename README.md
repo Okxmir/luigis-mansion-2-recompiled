@@ -1,5 +1,7 @@
 # Luigi’s Mansion 2 Recompiled
 
+Our discord : https://discord.gg/4DcKGJT4aW
+
 An experimental community port of **Luigi’s Mansion 2** for Windows x64. The project translates the European 3DS release’s ARM and Thumb code (`CTR-P-AGGP`) into native code and loads assets from a local copy of the cartridge.
 
 **You need your own European cartridge image.** This repository provides the port’s source code and the tools to build it locally. Keep the cartridge image, extracted assets, and recompiled executable on your PC.
