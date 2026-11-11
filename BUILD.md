@@ -37,6 +37,20 @@ The Release configuration prints `Vulkan vertex shader compilation enabled` when
 
 For a Debug build, run `scripts/build_debug.ps1`, followed by `scripts/run_tests.ps1 -Configuration Debug`. The first build compiles a large amount of generated code. `LGM2_FAST_BUILD` speeds up iteration by disabling optimization for those sources.
 
+## Game language
+
+Close the game and open `userdata/settings.ini` in the same folder as `LuigisMansion2.exe`. For the packaged build, this is `dist/userdata/settings.ini`. Create the folder and file if needed. If you set `LGM2_DATA_DIR`, open `settings.ini` in that directory instead.
+
+Add or replace the `language=` line with one of the following settings, then relaunch the game.
+
+| Setting | Language |
+| --- | --- |
+| `language=1` | English |
+| `language=2` | French (default) |
+| `language=3` | German |
+| `language=4` | Italian |
+| `language=5` | Spanish |
+
 ## Shared font
 
 The game requests a BCFNT system font at startup. `prepare_font.ps1` uses Pillow to generate a compatible font locally. [System Files Generator](https://github.com/B3n30/citra_system_archives)
