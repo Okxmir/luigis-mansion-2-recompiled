@@ -29,6 +29,7 @@ def prepare(upstream, output):
     change(sdl, [
         ('#include "handoff.h"\n', ""),
         ('#include "launcher.h"\n', ""),
+        ('#include "settings.h"\n', '#include "settings.h"\n#include "controls_menu.h"\n'),
         (span(sdl, "bool hand_off_or_explain", "void run(void (*start)"), ""),
         ("const char *cli_dump, bool force_launcher, bool play", "const char *cli_dump"),
         ("        if (std::string problem; !hand_off_or_explain(cli_dump, &problem)) fatal(\"%s\", problem.c_str());\n", ""),
@@ -46,18 +47,44 @@ def prepare(upstream, output):
         (span(sdl, "    // the launcher, unless", "    if (device && !pica::gpu::init"),
          '    game_path = s.game_path;\n    const std::string game_id = "lm2";\n'),
         (span(sdl, '        LOG("no window', "    s.load();"), '        fatal("SDL initialization failed: %s", SDL_GetError());\n    }\n'),
+        (span(sdl, "constexpr int TRIGGER_THRESHOLD", "uint32_t gamepad_buttons"), """template<typename Pressed>
+uint32_t digital_buttons(Pressed pressed, int16_t &cx, int16_t &cy) {
+    uint32_t buttons = 0;
+    for (int i = C_A; i < C_CIRCLE_UP; ++i)
+        if (pressed(i)) buttons |= CONTROLS[i].button;
+    const int x = int(pressed(C_CIRCLE_RIGHT)) - int(pressed(C_CIRCLE_LEFT));
+    const int y = int(pressed(C_CIRCLE_UP)) - int(pressed(C_CIRCLE_DOWN));
+    if (x || y) cx = int16_t(x * CIRCLE_MAX), cy = int16_t(y * CIRCLE_MAX);
+    return buttons;
+}
+
+"""),
+        (span(sdl, "uint32_t gamepad_buttons", "SDL_ScaleMode scale_mode()"), """uint32_t gamepad_buttons(SDL_Gamepad *g, int16_t &cx, int16_t &cy) {
+    const Settings &s = settings();
+    const auto x_axis = s.swap_sticks ? SDL_GAMEPAD_AXIS_RIGHTX : SDL_GAMEPAD_AXIS_LEFTX;
+    const auto y_axis = s.swap_sticks ? SDL_GAMEPAD_AXIS_RIGHTY : SDL_GAMEPAD_AXIS_LEFTY;
+    const int ax = SDL_GetGamepadAxis(g, x_axis), ay = SDL_GetGamepadAxis(g, y_axis);
+    constexpr int deadzone = 6000;
+    if (std::abs(ax) > deadzone || std::abs(ay) > deadzone) {
+        cx = int16_t(ax * CIRCLE_MAX / 32767);
+        cy = int16_t(-ay * CIRCLE_MAX / 32767);
+    }
+    return digital_buttons([&](int i) { return pad_pressed(g, s.pad[i]); }, cx, cy);
+}
+
+"""),
         ("SDL_ScaleMode scale_mode() {", """struct GamepadTouch {
     float x = 0.5f, y = 0.5f;
     uint64_t last_frame = SDL_GetTicks(), last_active = 0;
     bool visible = false, pressed = false;
 
-    void update(const std::vector<SDL_Gamepad *> &pads, const Layout &layout, Input &in) {
+    void update(const std::vector<SDL_Gamepad *> &pads, const Layout &layout, Input &in, bool keyboard_touch) {
         const uint64_t now = SDL_GetTicks();
         const float seconds = std::min<uint64_t>(now - last_frame, 50) / 1000.0f;
         last_frame = now;
         pressed = false;
         visible = false;
-        if (pads.empty() || !layout.shown[1]) {
+        if (!layout.shown[1] || (pads.empty() && !keyboard_touch)) {
             last_active = 0;
             return;
         }
@@ -67,13 +94,17 @@ def prepare(upstream, output):
             const int magnitude = std::max(0, std::min(std::abs(value), 32767) - deadzone);
             return float(value < 0 ? -magnitude : magnitude) / (32767 - deadzone);
         };
+        const Settings &s = settings();
+        const auto x_axis = s.swap_sticks ? SDL_GAMEPAD_AXIS_LEFTX : SDL_GAMEPAD_AXIS_RIGHTX;
+        const auto y_axis = s.swap_sticks ? SDL_GAMEPAD_AXIS_LEFTY : SDL_GAMEPAD_AXIS_RIGHTY;
         float dx = 0, dy = 0;
+        pressed = keyboard_touch;
         for (SDL_Gamepad *pad : pads) {
             if (dx == 0 && dy == 0) {
-                dx = velocity(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX));
-                dy = velocity(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY));
+                dx = velocity(SDL_GetGamepadAxis(pad, x_axis));
+                dy = velocity(SDL_GetGamepadAxis(pad, y_axis));
             }
-            pressed |= SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+            pressed |= pad_pressed(pad, s.pad[C_TOUCH]);
         }
         x = std::clamp(x + dx * seconds, 0.0f, 1.0f);
         y = std::clamp(y + dy * seconds * BOTTOM_WIDTH / SCREEN_HEIGHT, 0.0f, 1.0f);
@@ -103,14 +134,57 @@ def prepare(upstream, output):
 };
 
 SDL_ScaleMode scale_mode() {"""),
-        ("    std::vector<SDL_Gamepad *> pads;", "    std::vector<SDL_Gamepad *> pads;\n    GamepadTouch pad_touch;"),
-        ("e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) s.swap_screens",
-         "e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_STICK) s.swap_screens"),
-        ("        for (SDL_Gamepad *g : pads) in.buttons |= gamepad_buttons(g, in.circle_x, in.circle_y);",
-         "        for (SDL_Gamepad *g : pads) in.buttons |= gamepad_buttons(g, in.circle_x, in.circle_y);\n"
-         "        pad_touch.update(pads, layout, in);"),
+        ("    std::vector<SDL_Gamepad *> pads;", """    std::vector<SDL_Gamepad *> pads;
+    GamepadTouch pad_touch;
+    ControlsMenu controls_menu;
+    if (!controls_menu.init(window, renderer)) LOG("Cannot initialize the controls menu: %s", SDL_GetError());
+    bool swap_was_pressed = false;"""),
+        ("        while (SDL_PollEvent(&e)) {\n            switch (e.type)",
+         "        while (SDL_PollEvent(&e)) {\n            if (controls_menu.event(e, s)) continue;\n            switch (e.type)"),
+        ("                if (e.key.repeat) break;",
+         """                if (e.key.repeat || std::find(std::begin(s.keys), std::end(s.keys), int(e.key.scancode)) !=
+                                        std::end(s.keys)) break;"""),
+        ("                if (e.key.scancode == SDL_SCANCODE_TAB) s.swap_screens = !s.swap_screens, relayout();\n", ""),
+        ("""            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) s.swap_screens = !s.swap_screens, relayout();
+                break;
+""", ""),
+        (span(sdl, "        Input in;\n        in.buttons = keyboard_buttons", "        {\n            std::lock_guard lk(input_lock);"),
+         """        Input in;
+        bool swap_pressed = false;
+        if (!controls_menu.blocks_gameplay()) {
+            const bool *keys = SDL_GetKeyboardState(nullptr);
+            float mx, my, lx = 0, ly = 0, tx = 0, ty = 0;
+            const auto mouse = SDL_GetMouseState(&mx, &my);
+            const auto mouse_buttons = controls_menu.captures_mouse(mx, my) ? 0u : mouse;
+            const bool on_touch_screen = SDL_RenderCoordinatesFromWindow(renderer, mx, my, &lx, &ly) &&
+                                         layout.touch_at(lx, ly, tx, ty);
+            const bool mouse_touch = on_touch_screen && mouse_pressed(mouse_buttons, s.mouse[C_TOUCH]);
+            const auto mouse_action = [&](int i) { return !mouse_touch && mouse_pressed(mouse_buttons, s.mouse[i]); };
+            in.buttons = digital_buttons([&](int i) { return key_pressed(keys, s.keys[i]) || mouse_action(i); },
+                                         in.circle_x, in.circle_y);
+            swap_pressed = key_pressed(keys, s.keys[C_SWAP_SCREENS]) || mouse_action(C_SWAP_SCREENS);
+            for (SDL_Gamepad *pad : pads) {
+                in.buttons |= gamepad_buttons(pad, in.circle_x, in.circle_y);
+                swap_pressed |= pad_pressed(pad, s.pad[C_SWAP_SCREENS]);
+            }
+            pad_touch.update(pads, layout, in, key_pressed(keys, s.keys[C_TOUCH]));
+            if (mouse_touch) {
+                in.touching = true;
+                in.touch_x = uint16_t(tx);
+                in.touch_y = uint16_t(ty);
+            }
+        }
+        if (swap_pressed && !swap_was_pressed) {
+            s.swap_screens = !s.swap_screens;
+            relayout();
+        }
+        swap_was_pressed = swap_pressed;
+"""),
         ("        if (!message.empty() && SDL_GetTicks() < message_until)",
-         "        pad_touch.draw(renderer, layout);\n        if (!message.empty() && SDL_GetTicks() < message_until)"),
+         "        if (!controls_menu.blocks_gameplay()) pad_touch.draw(renderer, layout);\n"
+         "        if (!message.empty() && SDL_GetTicks() < message_until)"),
+        ("        // YW2_WINDOW_SCREENSHOT=", "        controls_menu.draw(renderer, s);\n        // YW2_WINDOW_SCREENSHOT="),
     ])
     header = frontend / "frontend.h"
     change(header, [
@@ -140,6 +214,13 @@ SDL_ScaleMode scale_mode() {"""),
     ])
     settings = frontend / "settings.h"
     change(settings, [
+        ("C_CIRCLE_UP, C_CIRCLE_DOWN, C_CIRCLE_LEFT, C_CIRCLE_RIGHT, CONTROL_COUNT",
+         "C_CIRCLE_UP, C_CIRCLE_DOWN, C_CIRCLE_LEFT, C_CIRCLE_RIGHT, C_TOUCH, C_SWAP_SCREENS, CONTROL_COUNT"),
+        ("    int pad[CONTROL_COUNT];  // controller binding codes",
+         "    int pad[CONTROL_COUNT];  // controller binding codes\n"
+         "    int mouse[CONTROL_COUNT]; // SDL mouse button numbers, or 0\n"
+         "    bool swap_sticks = false;"),
+        ("    void save() const;", "    bool save() const;"),
         ("    int hud_size = 80;", "    int hud_size = 100;"),
         ("    int camera_zoom = 90;", "    int camera_zoom = 100;"),
         ("    int language = 1;", "    int language = 2;"),
@@ -148,6 +229,53 @@ SDL_ScaleMode scale_mode() {"""),
     controls = frontend / "settings.cpp"
     change(controls, [
         ("SDL_SCANCODE_U,    SDL_SCANCODE_Q,", "SDL_SCANCODE_U,    SDL_SCANCODE_LSHIFT,"),
+        ('    {"circle_right", "Circle Pad Right", 0},',
+         '    {"circle_right", "Circle Pad Right", 0},\n'
+         '    {"touch", "Touch Screen", 0},\n'
+         '    {"swap_screens", "Swap Screens", 0},'),
+        ("        SDL_SCANCODE_W,      SDL_SCANCODE_S,         SDL_SCANCODE_A,    SDL_SCANCODE_D,",
+         "        SDL_SCANCODE_W,      SDL_SCANCODE_S,         SDL_SCANCODE_A,    SDL_SCANCODE_D,\n"
+         "        SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_TAB,"),
+        ("        PAD_NONE,                     PAD_NONE,                     PAD_NONE,",
+         "        PAD_NONE,                     PAD_NONE,                     PAD_NONE,\n"
+         "        SDL_GAMEPAD_BUTTON_RIGHT_STICK, SDL_GAMEPAD_BUTTON_LEFT_STICK,"),
+        ("    for (int i = 0; i < CONTROL_COUNT; i++) keys[i] = KEYS[i], pad[i] = PAD[i];",
+         """    for (int i = 0; i < CONTROL_COUNT; ++i) {
+        keys[i] = KEYS[i];
+        pad[i] = PAD[i];
+        mouse[i] = 0;
+    }
+    mouse[C_TOUCH] = SDL_BUTTON_LEFT;
+    swap_sticks = false;"""),
+        ('        else if (k == "language")',
+         '        else if (k == "swap_sticks") swap_sticks = b;\n        else if (k == "language")'),
+        ('                if (k == std::string("pad_") + CONTROLS[i].id) pad[i] = pad_from_id(v);',
+         '''                if (k == std::string("pad_") + CONTROLS[i].id) pad[i] = pad_from_id(v);
+                if (k == std::string("mouse_") + CONTROLS[i].id) {
+                    const int button = std::atoi(v.c_str());
+                    mouse[i] = button >= SDL_BUTTON_LEFT && button <= SDL_BUTTON_X2 ? button : 0;
+                }'''),
+        ("void Settings::save() const {\n    std::ofstream f(file());",
+         """bool Settings::save() const {
+    const auto destination = file();
+    auto pending = destination;
+    pending += ".pending-" + std::to_string(platform::instance_slot());
+    std::ofstream f(pending);"""),
+        ('      << "language=" << language << "\\n"',
+         '      << "swap_sticks=" << swap_sticks << "\\n"\n      << "language=" << language << "\\n"'),
+        ('        f << "pad_" << CONTROLS[i].id << "=" << pad_id(pad[i]) << "\\n";\n    }\n}',
+         '''        f << "pad_" << CONTROLS[i].id << "=" << pad_id(pad[i]) << "\\n";
+        f << "mouse_" << CONTROLS[i].id << "=" << mouse[i] << "\\n";
+    }
+    f.close();
+    std::error_code error;
+    if (f) {
+        std::filesystem::rename(pending, destination, error);
+        if (!error) return true;
+    }
+    std::filesystem::remove(pending, error);
+    return false;
+}'''),
     ])
     svc = src / "kernel" / "svc.cpp"
     change(svc, [

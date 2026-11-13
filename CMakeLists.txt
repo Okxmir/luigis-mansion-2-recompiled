@@ -87,12 +87,24 @@ set(RUNTIME_FILES
 )
 list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 
+set(IMGUI "${UPSTREAM}/runtime/third_party/imgui")
+add_library(lm2_imgui STATIC
+    "${IMGUI}/imgui.cpp"
+    "${IMGUI}/imgui_draw.cpp"
+    "${IMGUI}/imgui_tables.cpp"
+    "${IMGUI}/imgui_widgets.cpp"
+    "${IMGUI}/backends/imgui_impl_sdl3.cpp"
+    "${IMGUI}/backends/imgui_impl_sdlrenderer3.cpp"
+)
+target_include_directories(lm2_imgui PUBLIC "${IMGUI}" "${IMGUI}/backends")
+target_link_libraries(lm2_imgui PUBLIC SDL3::SDL3)
+
 add_executable(LuigisMansion2 src/main.cpp src/lm2_services.cpp src/shared_font.cpp src/save_storage.cpp
-    tests/save_crc.cpp ${RUNTIME_FILES})
+    src/controls_menu.cpp tests/save_crc.cpp ${RUNTIME_FILES})
 target_include_directories(LuigisMansion2 PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src tests)
 target_compile_definitions(LuigisMansion2 PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(LuigisMansion2 PRIVATE /W3 /utf-8)
-target_link_libraries(LuigisMansion2 PRIVATE game_code SDL3::SDL3 ws2_32 bcrypt)
+target_link_libraries(LuigisMansion2 PRIVATE game_code lm2_imgui ws2_32 bcrypt)
 
 find_program(LGM2_DXC dxc HINTS "${CMAKE_CURRENT_SOURCE_DIR}/build/upstream/dxc-1.8.2505.1/bin/x64" NO_DEFAULT_PATH)
 if(LGM2_DXC AND EXISTS "${LGM2_DXC}")

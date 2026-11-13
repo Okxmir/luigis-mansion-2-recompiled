@@ -24,6 +24,7 @@ foreach ($file in $paths) {
 New-Item -ItemType Directory -Path "$dist/licenses" -Force | Out-Null
 Copy-Item -LiteralPath $paths -Destination $dist
 Copy-Item -LiteralPath "$ProjectRoot/build/upstream/clockwork-master/LICENSE" -Destination "$dist/licenses/Clockwork.txt"
+Copy-Item -LiteralPath "$ProjectRoot/build/upstream/clockwork-master/runtime/third_party/imgui/LICENSE.txt" -Destination "$dist/licenses/Dear-ImGui.txt"
 Copy-Item -LiteralPath "$ProjectRoot/build/upstream/SDL3-3.4.0/LICENSE.txt" -Destination "$dist/licenses/SDL3.txt"
 $xbyakLicense = "$ProjectRoot/build/upstream/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d/COPYRIGHT"
 if (Test-Path -LiteralPath $xbyakLicense) {

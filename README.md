@@ -14,6 +14,8 @@ On the RTX 3080 Ti test system, the Release build reached about 53–54 FPS in t
 
 ## Controls
 
+Click **Controls** in the game window or press **F4** to open the controls menu. Click a binding in the Keyboard, Mouse, or Gamepad column, then press the input you want to use. Select **Save** to apply your changes and keep them for the next launch. The menu follows the [game language setting](BUILD.md#game-language).
+
 Connect a gamepad recognized by SDL before or during play. The table shows the default bindings.
 
 | 3DS control | AZERTY keyboard | Xbox controller | PlayStation controller |
