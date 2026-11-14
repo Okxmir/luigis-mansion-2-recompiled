@@ -28,8 +28,6 @@ def main():
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     main_push = os.environ["GITHUB_EVENT_NAME"] == "push" and os.environ["GITHUB_REF"] == "refs/heads/main"
     previous = previous_version(event.get("before")) if main_push else None
-    if "pull_request" in event and event["pull_request"]["base"]["ref"] == "main":
-        previous = previous_version(event["pull_request"]["base"]["sha"])
     if previous is not None and current < previous:
         raise SystemExit("VERSION cannot decrease on main")
     eligible = main_push and previous is not None and current > previous

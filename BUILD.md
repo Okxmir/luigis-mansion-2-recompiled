@@ -101,8 +101,6 @@ Vulkan reads supported interleaved vertex buffers directly. Set `LGM2_UNPACK_VER
 
 ## Automated builds and releases
 
-GitHub Actions compiles and tests the native runtime for every enabled platform on each push and pull request. The CI build uses a synthetic entry table. A playable build and its cartridge-based tests run locally with your own image.
+GitHub Actions compiles and tests the native runtime for every enabled platform on each push to `main`. The CI build uses a synthetic entry table. A playable build and its cartridge-based tests run locally with your own image.
 
-Require the **All platform builds** check on `main`. To add another platform, add its runner and native build command to the matrix in [build.yml](.github/workflows/build.yml). The aggregate check and release job automatically wait for it.
-
-To release, raise the number in `VERSION` and merge the change into `main`. After all platform jobs pass on the new commit, GitHub publishes a tagged source release. Ordinary commits leave the existing version and release unchanged.
+To release, raise the number in `VERSION` and push the change to `main`. After all platform jobs pass on the new commit, GitHub publishes a tagged source release. Ordinary commits leave the existing version and release unchanged.
