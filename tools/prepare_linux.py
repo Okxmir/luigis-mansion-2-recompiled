@@ -139,6 +139,10 @@ def main():
     parser.add_argument("--key-file", type=Path)
     parser.add_argument("--dependencies-only", action="store_true")
     args = parser.parse_args()
+    if args.cartridge:
+        args.cartridge = args.cartridge.resolve()
+    if args.key_file:
+        args.key_file = args.key_file.resolve()
     if not args.dependencies_only and not args.cartridge and not (ROOT / "extracted/LM2-EUR.cxi").is_file():
         parser.error("Pass --cartridge with the path to your European game image")
     try:

@@ -4,7 +4,9 @@
 #include <atomic>
 #include <cmath>
 #include <immintrin.h>
+#ifdef _MSC_VER
 #include <intrin.h>
+#endif
 #include "pica_shader_decode.h"
 
 namespace pica {
@@ -25,13 +27,20 @@ constexpr auto shader_swizzles() {
 
 constexpr auto SWIZZLE_BYTES = shader_swizzles();
 
+#ifndef _MSC_VER
+__attribute__((target("ssse3")))
+#endif
+inline __m128 shuffle_shader_operand(__m128 value, const __m128i *order) {
+    return _mm_castsi128_ps(_mm_shuffle_epi8(_mm_castps_si128(value), _mm_loadu_si128(order)));
+}
+
 inline __m128 shader_operand(const Vec4 &v, uint32_t selector, bool negate, bool ssse3) {
     __m128 result;
     if (selector == 0x1b) {
         result = _mm_loadu_ps(v.v);
     } else if (ssse3) {
         const auto *order = reinterpret_cast<const __m128i *>(SWIZZLE_BYTES[selector].data());
-        result = _mm_castsi128_ps(_mm_shuffle_epi8(_mm_castps_si128(_mm_loadu_ps(v.v)), _mm_loadu_si128(order)));
+        result = shuffle_shader_operand(_mm_loadu_ps(v.v), order);
     } else {
         result = _mm_setr_ps(v[(selector >> 6) & 3], v[(selector >> 4) & 3], v[(selector >> 2) & 3], v[selector & 3]);
     }
@@ -74,9 +83,13 @@ inline bool compare(float a, float b, uint32_t op) {
 void run_arithmetic(const ShaderSetup &s, uint32_t pc, uint32_t ins, Vec4 const in[16], Vec4 out[16],
                     Vec4 tmp[16], int32_t addr[4], bool cond[2]) {
     static const bool ssse3 = [] {
+#ifdef _MSC_VER
         int cpu[4];
         __cpuid(cpu, 1);
         return (cpu[2] & (1 << 9)) != 0;
+#else
+        return __builtin_cpu_supports("ssse3") != 0;
+#endif
     }();
     static const Vec4 ones = {{1, 1, 1, 1}};
     thread_local ArithmeticInstruction cache[4096]{};
