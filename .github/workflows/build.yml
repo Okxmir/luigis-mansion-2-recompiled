@@ -47,7 +47,7 @@ jobs:
         run: python3 tools/ci_version.py
 
   release:
-    name: Publish versioned source release
+    name: Publish versioned build kits
     runs-on: ubuntu-24.04
     needs: version
     if: ${{ needs.version.outputs.publish == 'true' }}
@@ -57,15 +57,47 @@ jobs:
       group: release-${{ needs.version.outputs.version }}
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
       - name: Publish the tested commit
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           tag="v$VERSION"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          release_state=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,targetCommitish \
+            --jq 'if .isDraft then .targetCommitish else "published" end' 2>/dev/null || true)
+          if [[ "$release_state" == published ]]; then
             echo "$tag has already been released."
             exit 0
           fi
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Luigi's Mansion 2 Recompiled $VERSION" --generate-notes
+          if [[ -n "$release_state" && "$release_state" != "$GITHUB_SHA" ]]; then
+            echo "The draft for $tag targets a different commit." >&2
+            exit 1
+          fi
+
+          windows="Luigis-Mansion-2-$tag-windows-x64-build-kit"
+          linux="Luigis-Mansion-2-$tag-linux-x64-build-kit"
+          windows_archive="$RUNNER_TEMP/$windows.zip"
+          linux_archive="$RUNNER_TEMP/$linux.tar.gz"
+          git archive --format=zip --prefix="$windows/" --output="$windows_archive" "$GITHUB_SHA"
+          git archive --format=tar.gz --prefix="$linux/" --output="$linux_archive" "$GITHUB_SHA"
+
+          if [[ -z "$release_state" ]]; then
+            guide="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$tag/BUILD.md"
+            notes="$RUNNER_TEMP/luigis-mansion-2-release-notes.md"
+            cat > "$notes" <<EOF
+          Download the build kit for your system, extract it, and follow the build guide with your own European 3DS cartridge image (CTR-P-AGGP).
+
+          - **Windows x64 (.zip)** builds \`dist/LuigisMansion2.exe\`. [Windows build guide]($guide#building-for-windows-x64)
+          - **Linux x64 (.tar.gz)** builds \`dist/linux-x64/LuigisMansion2\`. [Linux build guide]($guide#building-for-linux-x64)
+
+          Both archives include the port's source code and build tools. The game executable is built locally from your cartridge image.
+          EOF
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Luigi's Mansion 2 Recompiled $VERSION (Windows and Linux)" --draft --notes-file "$notes"
+          fi
+
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$windows_archive#Windows x64 build kit" "$linux_archive#Linux x64 build kit"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
