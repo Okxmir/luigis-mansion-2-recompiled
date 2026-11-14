@@ -11,8 +11,12 @@
 #include "save_storage.h"
 
 #include <SDL3/SDL.h>
+#ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <openssl/sha.h>
+#endif
 
 #include <array>
 #include <cstdio>
@@ -34,9 +38,14 @@ void check_original_code(const std::vector<uint8_t> &code) {
     };
     if (code.size() != 0x850000) fatal("Incompatible LM2 executable size");
     std::array<uint8_t, 32> hash{};
+#ifdef _WIN32
     auto status = BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, const_cast<PUCHAR>(code.data()),
                              static_cast<ULONG>(code.size()), hash.data(), static_cast<ULONG>(hash.size()));
-    if (status < 0 || hash != expected) fatal("The supplied cartridge code does not match this build");
+    const bool hashed = status >= 0;
+#else
+    const bool hashed = SHA256(code.data(), code.size(), hash.data()) != nullptr;
+#endif
+    if (!hashed || hash != expected) fatal("The supplied cartridge code does not match this build");
 }
 
 GameImage load_lm2(const char *path) {

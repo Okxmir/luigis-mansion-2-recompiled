@@ -7,7 +7,9 @@ cd /d "%~dp0.."
 set "CMAKEBIN=%~2\Common7\IDE\CommonExtensions\Microsoft\CMake"
 set "PATH=%CMAKEBIN%\CMake\bin;%CMAKEBIN%\Ninja;%PATH%"
 set "BUILDDIR=build\windows-%~3"
-cmake -S . -B "%BUILDDIR%" -G Ninja "-DCMAKE_BUILD_TYPE=%~3"
+set "CONFIG=%~3"
+if "%CONFIG%"=="CI" set "CONFIG=Release"
+cmake -S . -B "%BUILDDIR%" -G Ninja "-DCMAKE_BUILD_TYPE=%CONFIG%" "-DLGM2_RUNTIME_TEST_ONLY=%~4"
 if errorlevel 1 exit /b 1
 cmake --build "%BUILDDIR%" --parallel 6
 exit /b %errorlevel%

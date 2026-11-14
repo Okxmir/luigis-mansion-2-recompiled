@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <iterator>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 namespace frontend {
 namespace {
@@ -138,6 +140,7 @@ bool ControlsMenu::init(SDL_Window *window, SDL_Renderer *renderer) {
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+#ifdef _WIN32
     wchar_t windows[MAX_PATH];
     const UINT length = GetWindowsDirectoryW(windows, MAX_PATH);
     if (length && length < MAX_PATH) {
@@ -148,6 +151,7 @@ bool ControlsMenu::init(SDL_Window *window, SDL_Renderer *renderer) {
             io.FontDefault = io.Fonts->AddFontFromFileTTF(reinterpret_cast<const char *>(path.c_str()), 16);
         }
     }
+#endif
     ImGui::StyleColorsDark();
     ImGuiStyle &style = ImGui::GetStyle();
     style.FontSizeBase = 16;

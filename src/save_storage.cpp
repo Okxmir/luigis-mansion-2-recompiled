@@ -2,9 +2,16 @@
 
 #include "log.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 #include <chrono>
+#include <cerrno>
 #include <fstream>
 #include <string>
 
@@ -16,7 +23,12 @@ constexpr auto format_name = ".lm2-archive-format";
 fs::path make_snapshot_directory(const fs::path &parent, const char *prefix) {
     fs::create_directories(parent);
     auto now = std::chrono::system_clock::now().time_since_epoch().count();
-    auto stem = std::string(prefix) + std::to_string(now) + "-" + std::to_string(GetCurrentProcessId());
+#ifdef _WIN32
+    const auto process = GetCurrentProcessId();
+#else
+    const auto process = getpid();
+#endif
+    auto stem = std::string(prefix) + std::to_string(now) + "-" + std::to_string(process);
     for (unsigned suffix = 0; suffix != 100; ++suffix) {
         auto path = parent / (stem + "-" + std::to_string(suffix));
         if (fs::create_directory(path)) return path;
@@ -38,9 +50,18 @@ void lock_save_directory(const fs::path &root) {
     fs::create_directories(root);
     auto lock = root / "lm2-save.lock";
     // Keep the handle for the lifetime of the game.
+#ifdef _WIN32
     HANDLE handle = CreateFileW(lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) fatal("Cannot lock LM2 user data (Windows error %lu)", GetLastError());
+#else
+    const int fd = open(lock.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0 || flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        const int error = errno;
+        if (fd >= 0) close(fd);
+        fatal("Cannot lock LM2 user data (errno %d)", error);
+    }
+#endif
 }
 
 std::optional<SaveFormat> read_save_format(const fs::path &save) {

@@ -1,4 +1,27 @@
-# Building for Windows x64
+# Building Luigi’s Mansion 2
+
+## Building for Linux x64
+
+On Ubuntu 24.04, install the build dependencies. You need an x86-64 Linux system, a C++20 compiler with `std::format` support, CMake 3.24 or newer, Python 3.11 or newer, and Rust 1.85 or newer.
+
+```bash
+sudo apt install build-essential cmake ninja-build python3-pil python3-png python3-cryptography \
+  libssl-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev \
+  libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev libvulkan-dev
+```
+
+Install a recent Rust toolchain with [rustup](https://rustup.rs/) and confirm that `cargo --version` works in the same terminal.
+
+From the source folder, build with your own decrypted European cartridge image and launch the game.
+
+```bash
+bash scripts/build_linux.sh --cartridge "/path/to/LM2-EUR.3ds"
+./dist/linux-x64/LuigisMansion2
+```
+
+The script also accepts a compatible decrypted `.cxi`. For supported encrypted images, add `--key-file /path/to/slot0x2c.key`. Linux uses Vulkan by default and SDL presentation in software mode. Its settings and saves are in `dist/linux-x64/userdata` unless you set `LGM2_DATA_DIR`.
+
+## Building for Windows x64
 
 You need Windows x64, Visual Studio with the **Desktop development with C++** workload, the Windows SDK, CMake and Ninja, and Python 3.11 or later on your PATH. The preparation script downloads and verifies the build dependencies in `build/upstream`, including those for the accelerated Vulkan renderer.
 
@@ -75,3 +98,11 @@ The preparation script verifies and installs the pinned Xbyak headers for the x6
 The preparation script installs the Windows x64 release of DXC 1.8.2505.1 by default. Its compiler DLL builds Vulkan vertex shaders in the background from the shader programs uploaded by the local game. Pending or unsupported programs run on the CPU. Pass `-WithGpuShaders:$false` to skip downloading DXC, or set `LGM2_CPU_VERTEX=1` to use CPU vertex processing with Vulkan at runtime. To use another SPIR-V-capable DXC installation, pass its executable path to CMake with `-DLGM2_DXC=...`. [Microsoft DXC 1.8.2505.1](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2505.1)
 
 Vulkan reads supported interleaved vertex buffers directly. Set `LGM2_UNPACK_VERTEX_INPUTS=1` to compare with the path that unpacks those attributes on the CPU.
+
+## Automated builds and releases
+
+GitHub Actions compiles and tests the native runtime for every enabled platform on each push and pull request. The CI build uses a synthetic entry table. A playable build and its cartridge-based tests run locally with your own image.
+
+Require the **All platform builds** check on `main`. To add another platform, add its runner and native build command to the matrix in [build.yml](.github/workflows/build.yml). The aggregate check and release job automatically wait for it.
+
+To release, raise the number in `VERSION` and merge the change into `main`. After all platform jobs pass on the new commit, GitHub publishes a tagged source release. Ordinary commits leave the existing version and release unchanged.

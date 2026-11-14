@@ -5,19 +5,19 @@
 
 #include <array>
 #include <cstring>
-#include <intrin.h>
 #include <memory>
 #include <unordered_map>
 #include <utility>
 
 #define XBYAK_NO_OP_NAMES
 #include <xbyak/xbyak.h>
+#include <xbyak/xbyak_util.h>
 
 namespace pica {
 namespace {
 
 // Uniform control flow is resolved once per draw state. Vertex-dependent control flow
-// stays in the interpreter. Generated functions are leaf functions in the Win64 ABI.
+// stays in the interpreter. Generated functions are leaf functions in the host ABI.
 class VertexEmitter final : public Xbyak::CodeGenerator {
 public:
     VertexEmitter() : CodeGenerator(4096, Xbyak::AutoGrow) {}
@@ -35,7 +35,11 @@ public:
         if (!specialize_vertex_program(shader, entry, emit, branch)) return false;
         ret();
         readyRE();
+#ifdef _WIN32
         return FlushInstructionCache(GetCurrentProcess(), getCode(), getSize()) != 0;
+#else
+        return true; // x86-64 has a coherent instruction cache.
+#endif
     }
 
 private:
@@ -44,6 +48,11 @@ private:
     std::array<bool, 2> moved_address{};
     int32_t loop_address = 0;
     bool compared = false;
+#ifdef _WIN32
+    const Xbyak::Reg64 &uniforms = rcx, &inputs = rdx, &outputs = r8, &temporaries = r9;
+#else
+    const Xbyak::Reg64 &uniforms = rdi, &inputs = rsi, &outputs = rdx, &temporaries = rcx;
+#endif
 
     void splat_constant(const Xbyak::Xmm &dst, uint32_t bits) {
         mov(eax, bits);
@@ -53,9 +62,9 @@ private:
 
     void operand(const Xbyak::Xmm &dst, unsigned reg, unsigned relative, uint32_t selector) {
         if (reg < 16) {
-            movups(dst, ptr[rdx + reg * sizeof(Vec4)]);
+            movups(dst, ptr[inputs + reg * sizeof(Vec4)]);
         } else if (reg < 32) {
-            if (initialized[reg - 16]) movups(dst, ptr[r9 + (reg - 16) * sizeof(Vec4)]);
+            if (initialized[reg - 16]) movups(dst, ptr[temporaries + (reg - 16) * sizeof(Vec4)]);
             else xorps(dst, dst);
         } else {
             const unsigned offset = reg - 32;
@@ -66,17 +75,17 @@ private:
                     cmp(eax, 96);
                     jae(out_of_range);
                     shl(eax, 4);
-                    movups(dst, ptr[rcx + rax]);
+                    movups(dst, ptr[uniforms + rax]);
                     jmp(loaded);
                     L(out_of_range);
                     splat_constant(dst, 0x3f800000);
                     L(loaded);
                 } else {
-                    movups(dst, ptr[rcx + offset * sizeof(Vec4)]);
+                    movups(dst, ptr[uniforms + offset * sizeof(Vec4)]);
                 }
             } else {
                 const unsigned index = offset + (relative == 3 ? loop_address : 0);
-                if (index < 96) movups(dst, ptr[rcx + index * sizeof(Vec4)]);
+                if (index < 96) movups(dst, ptr[uniforms + index * sizeof(Vec4)]);
                 else splat_constant(dst, 0x3f800000);
             }
         }
@@ -140,7 +149,7 @@ private:
         // their interpreter defaults before the split so either path can reach the join.
         xorps(xmm5, xmm5);
         for (unsigned i = 0; i < initialized.size(); ++i) {
-            if (!initialized[i]) movups(ptr[r9 + i * sizeof(Vec4)], xmm5);
+            if (!initialized[i]) movups(ptr[temporaries + i * sizeof(Vec4)], xmm5);
         }
         initialized.fill(true);
         if (!moved_address[0]) xor_(r10d, r10d);
@@ -259,7 +268,7 @@ private:
 
         const bool output = ins.destination < 16;
         const unsigned index = ins.destination & 15;
-        const auto destination = ptr[(output ? r8 : r9) + index * sizeof(Vec4)];
+        const auto destination = ptr[(output ? outputs : temporaries) + index * sizeof(Vec4)];
         if (mask != 15) {
             if (output || initialized[index]) movups(xmm1, destination);
             else xorps(xmm1, xmm1);
@@ -292,11 +301,7 @@ struct ShaderKeyHash {
 } // namespace
 
 CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, uint64_t revision) {
-    static const bool available = [] {
-        int cpu[4];
-        __cpuid(cpu, 1);
-        return (cpu[2] & (1 << 19)) != 0; // SSE4.1
-    }();
+    static const bool available = Xbyak::util::Cpu{}.has(Xbyak::util::Cpu::tSSE41);
     if (!available) return nullptr;
 
     static thread_local uint64_t last_revision = 0;
@@ -316,7 +321,7 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
         auto code = std::make_unique<VertexEmitter>();
         if (code->compile(shader, entry)) compiled = std::move(code);
     } catch (const Xbyak::Error &) {
-        // The interpreter also works when Windows disallows executable allocations.
+        // The interpreter handles systems that disallow executable allocations.
     }
     return compiled ? compiled->getCode<CompiledVertex>() : nullptr;
 }

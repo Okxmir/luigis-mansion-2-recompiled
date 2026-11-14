@@ -6,9 +6,15 @@
 #include "pica_shader_flow.h"
 
 #include <SDL3/SDL_gpu.h>
+#ifndef _WIN32
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_loadso.h>
+#endif
+#ifdef _WIN32
 #include <windows.h>
-#include <dxcapi.h>
 #include <wrl/client.h>
+#endif
+#include <dxcapi.h>
 
 #include <algorithm>
 #include <chrono>
@@ -177,28 +183,52 @@ private:
 
 DxcCreateInstanceProc compiler_entry() {
     static const auto create = []() -> DxcCreateInstanceProc {
+#ifdef _WIN32
         HMODULE dll = LoadLibraryExW(L"dxcompiler.dll", nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
         return dll ? reinterpret_cast<DxcCreateInstanceProc>(GetProcAddress(dll, "DxcCreateInstance")) : nullptr;
+#else
+        const char *base = SDL_GetBasePath();
+        if (!base) return nullptr;
+        const std::string path = std::string(base) + "libdxcompiler.so";
+        auto *library = SDL_LoadObject(path.c_str());
+        return library ? reinterpret_cast<DxcCreateInstanceProc>(SDL_LoadFunction(library, "DxcCreateInstance")) : nullptr;
+#endif
     }();
     return create;
 }
 
 std::vector<uint8_t> compile(const ShaderSetup &shader, uint32_t entry, const VertexShaderLayout &layout) {
+#ifdef _WIN32
     using Microsoft::WRL::ComPtr;
+#else
+    // The Linux SDK provides a COM pointer with compatible address-of semantics.
+    CComPtr<IDxcCompiler3> compiler;
+    CComPtr<IDxcResult> result;
+    CComPtr<IDxcBlob> object;
+#endif
     const std::string source = SpirvSource(shader, layout).build(entry);
     if (source.empty()) return {};
+#ifdef _WIN32
     ComPtr<IDxcCompiler3> compiler;
-    if (FAILED(compiler_entry()(CLSID_DxcCompiler, IID_PPV_ARGS(compiler.GetAddressOf())))) return {};
+    ComPtr<IDxcResult> result;
+    ComPtr<IDxcBlob> object;
+    auto compiler_out = compiler.GetAddressOf();
+    auto result_out = result.GetAddressOf();
+    auto object_out = object.GetAddressOf();
+#else
+    auto compiler_out = &compiler;
+    auto result_out = &result;
+    auto object_out = &object;
+#endif
+    if (FAILED(compiler_entry()(CLSID_DxcCompiler, IID_PPV_ARGS(compiler_out)))) return {};
     const DxcBuffer buffer{source.data(), source.size(), DXC_CP_UTF8};
     const wchar_t *arguments[] = {L"-spirv", L"-fspv-target-env=vulkan1.0", L"-T", L"vs_6_0", L"-E", L"main",
                                   L"-HV", L"2021", L"-Ges", L"-O3"};
-    ComPtr<IDxcResult> result;
     if (FAILED(compiler->Compile(&buffer, arguments, UINT32(std::size(arguments)), nullptr,
-                                 IID_PPV_ARGS(result.GetAddressOf())))) return {};
+                                 IID_PPV_ARGS(result_out)))) return {};
     HRESULT status;
     if (FAILED(result->GetStatus(&status)) || FAILED(status)) return {};
-    ComPtr<IDxcBlob> object;
-    if (FAILED(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(object.GetAddressOf()), nullptr))) return {};
+    if (FAILED(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(object_out), nullptr))) return {};
     const auto *start = static_cast<const uint8_t *>(object->GetBufferPointer());
     return {start, start + object->GetBufferSize()};
 }

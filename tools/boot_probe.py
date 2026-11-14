@@ -19,6 +19,9 @@ def main():
     root = Path(__file__).resolve().parents[1]
     logs = root / "logs"
     logs.mkdir(exist_ok=True)
+    windows = os.name == "nt"
+    name = "LuigisMansion2.exe" if windows else "LuigisMansion2"
+    build_dir = "windows-Release" if windows else "linux-Release"
     if Path(args.log).name != args.log:
         parser.error("--log must be a filename")
     env = os.environ.copy()
@@ -32,10 +35,11 @@ def main():
         LGM2_TRACE_FIRST_SLEEP="1",
     )
     if args.packaged:
-        command = [str(root / "dist" / "LuigisMansion2.exe")]
+        directory = root / "dist" if windows else root / "dist" / "linux-x64"
+        command = [str(directory / name)]
     else:
         env.setdefault("LGM2_SHARED_FONT", str(root / "extracted" / "shared-font.bcfnt"))
-        binary = args.executable.resolve() if args.executable else root / "build" / "windows-Release" / "LuigisMansion2.exe"
+        binary = args.executable.resolve() if args.executable else root / "build" / build_dir / name
         command = [str(binary),
                    str(root / "extracted" / "LM2-EUR.cxi")]
     with (logs / args.log).open("wb") as output:
@@ -46,7 +50,7 @@ def main():
                 stderr=subprocess.STDOUT,
                 env=env,
                 timeout=args.seconds,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=subprocess.CREATE_NO_WINDOW if windows else 0,
                 cwd=logs,
                 check=False,
             )

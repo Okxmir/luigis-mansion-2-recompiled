@@ -41,7 +41,9 @@ def prepare(upstream, output):
         ("        if (s.gpu_renderer) {", '        if (s.gpu_renderer && !std::getenv("LGM2_CPU_PICA")) {'),
         ("""        if (!renderer && !(renderer = SDL_CreateRenderer(window, nullptr)))
             fatal("cannot create a renderer: %s", SDL_GetError());""",
-         """        if (!renderer) renderer = SDL_CreateRenderer(window, "direct3d11");
+         """#ifdef _WIN32
+        if (!renderer) renderer = SDL_CreateRenderer(window, "direct3d11");
+#endif
         if (!renderer) renderer = SDL_CreateRenderer(window, nullptr);
         if (!renderer) fatal("cannot create a renderer: %s", SDL_GetError());"""),
         (span(sdl, "    // the launcher, unless", "    if (device && !pica::gpu::init"),
@@ -291,7 +293,7 @@ SDL_ScaleMode scale_mode() {"""),
     kernel = src / "kernel" / "kernel.cpp"
     change(kernel, [
         ("    // WIFI_MACADDR:", """    // LM2 polls the PTM readiness byte before querying RUNNING_HW.
-    // Windows has already supplied our retail hardware identity above.
+    // The earlier cases supply the game's retail hardware identity.
     *mem::ptr(mem::SHARED_PAGE + 0x86) = 1;
     // WIFI_MACADDR:"""),
     ])

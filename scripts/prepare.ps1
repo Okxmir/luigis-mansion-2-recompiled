@@ -2,6 +2,7 @@ param(
     [string] $Cartridge,
     [string] $KeyFile,
     [switch] $CodeOnly,
+    [switch] $DependenciesOnly,
     [switch] $WithGpuShaders = $true
 )
 . "$PSScriptRoot/common.ps1"
@@ -37,20 +38,10 @@ try {
     $sdl = Get-VerifiedArchive 'SDL3-devel-3.4.0-VC.zip' `
         'https://github.com/libsdl-org/SDL/releases/download/release-3.4.0/SDL3-devel-3.4.0-VC.zip' `
         '4489BA0070B8CE047B8717E4B71FA7E35AC71362E7A6BB2A90A7A27F624B3D5D'
-    $memmap = Get-VerifiedArchive 'memmap2-0.9.11.crate' `
-        'https://static.crates.io/crates/memmap2/memmap2-0.9.11.crate' `
-        'D1219ED1B7F229EE7104D281DD01D6802FE28BB6E95D292942C4DAACDEB798C0'
     $xbyakCommit = 'df112862583c2d327c1d9782fd28f53aa675f11d'
     $xbyak = Get-VerifiedArchive 'xbyak-pinned.zip' `
         "https://codeload.github.com/herumi/xbyak/zip/$xbyakCommit" `
         'B0E8D74A5813D4C4D2BAA550B889B7F7C2696E471DFB8DE1554CE47F7E52D7F8'
-    $rustVersion = '1.90.0-x86_64-pc-windows-msvc'
-    $rustc = Get-VerifiedArchive "rustc-$rustVersion.tar.xz" `
-        "https://static.rust-lang.org/dist/rustc-$rustVersion.tar.xz" `
-        'A18B3912905F154C34A7572954DDA9E9849AC6411A1E02FA390BF742F918FBCB'
-    $rustStd = Get-VerifiedArchive "rust-std-$rustVersion.tar.xz" `
-        "https://static.rust-lang.org/dist/rust-std-$rustVersion.tar.xz" `
-        '3B8C22F81C93C7E914369433430792BD6C06403806AE25B0B95F3CFC540A8B48'
 
     if (!(Test-Path -LiteralPath "$upstream/clockwork-master")) {
         Expand-Archive -LiteralPath $clockwork -DestinationPath $upstream -Force
@@ -73,6 +64,18 @@ try {
             Expand-Archive -LiteralPath $dxc -DestinationPath $dxcDir -Force
         }
     }
+    if ($DependenciesOnly) { return }
+
+    $memmap = Get-VerifiedArchive 'memmap2-0.9.11.crate' `
+        'https://static.crates.io/crates/memmap2/memmap2-0.9.11.crate' `
+        'D1219ED1B7F229EE7104D281DD01D6802FE28BB6E95D292942C4DAACDEB798C0'
+    $rustVersion = '1.90.0-x86_64-pc-windows-msvc'
+    $rustc = Get-VerifiedArchive "rustc-$rustVersion.tar.xz" `
+        "https://static.rust-lang.org/dist/rustc-$rustVersion.tar.xz" `
+        'A18B3912905F154C34A7572954DDA9E9849AC6411A1E02FA390BF742F918FBCB'
+    $rustStd = Get-VerifiedArchive "rust-std-$rustVersion.tar.xz" `
+        "https://static.rust-lang.org/dist/rust-std-$rustVersion.tar.xz" `
+        '3B8C22F81C93C7E914369433430792BD6C06403806AE25B0B95F3CFC540A8B48'
     foreach ($archive in @($memmap, $rustc, $rustStd)) {
         tar.exe -xf $archive -C $upstream
         if ($LASTEXITCODE -ne 0) { throw "Could not unpack $archive" }

@@ -13,9 +13,10 @@ function Find-Lgm2VisualStudio {
     throw 'Visual Studio with C++ and CMake tools was not found.'
 }
 
-function Build-Lgm2([string] $Configuration) {
+function Build-Lgm2([string] $Configuration, [switch] $RuntimeTestOnly) {
     $visualStudio = Find-Lgm2VisualStudio
     $developerPrompt = Join-Path $visualStudio 'Common7/Tools/VsDevCmd.bat'
-    & (Join-Path $PSScriptRoot 'native_build.cmd') $developerPrompt $visualStudio $Configuration
+    $runtimeTest = if ($RuntimeTestOnly) { 'ON' } else { 'OFF' }
+    & (Join-Path $PSScriptRoot 'native_build.cmd') $developerPrompt $visualStudio $Configuration $runtimeTest
     if ($LASTEXITCODE -ne 0) { throw "Windows build failed ($LASTEXITCODE)." }
 }
