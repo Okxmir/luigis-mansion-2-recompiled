@@ -22,7 +22,9 @@ jobs:
             runner: ubuntu-24.04
             command: |
               sudo apt-get update
-              sudo apt-get install -y ninja-build pkg-config libssl-dev libx11-dev libxext-dev libasound2-dev libvulkan-dev
+              sudo apt-get install -y ninja-build pkg-config libssl-dev \
+                libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev libxss-dev libxtst-dev \
+                libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev libasound2-dev libpulse-dev libvulkan-dev
               bash scripts/build_linux.sh --ci
     steps:
       - uses: actions/checkout@v4

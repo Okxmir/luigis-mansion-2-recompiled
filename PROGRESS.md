@@ -15,6 +15,12 @@
 - `scripts/prepare.ps1 -CodeOnly` reproduced extraction and recompilation with the pinned dependencies. Integrity checks reject an incorrect key before writing the final extracted partition. The original cartridge image matched its initial checksum.
 - Each running instance locks its save directory. During testing, Windows rejected a second launch using the same directory while the first instance continued running. See `logs/save-lock-test.txt`.
 
+## Linux validation
+
+- The Ubuntu 24.04 x86-64 build loaded the European cartridge and passed all three CTest checks. On a local virtual machine, the software renderer reached the title screen, loaded an existing test profile from keyboard input, advanced the bunker dialogue, and displayed the Gloomy Manor selection. Vulkan via Mesa llvmpipe displayed the first animated images of the opening sequence.
+- F4 opened the Controls menu. The test changed and saved a keyboard binding through the mouse and changed and saved a gamepad binding through a virtual Xbox controller. The bunker produced non-silent audio with distinct left and right channels at the SDL output.
+- The virtual machine has no hardware GPU. Vulkan via llvmpipe ran at about 1–2 FPS in the first animated frames and later stopped presenting new game frames during the introduction. The software renderer reached about 3 FPS in the first animation and 0.2–0.4 FPS in the bunker. In-mission performance and physical gamepad and audio devices still need testing on a Linux PC.
+
 ## Remaining validation
 
 Early Vulkan tests showed artifacts on the garden floor, steps, and gate. The first build defaulted to software rendering with Direct3D 11 display to avoid those artifacts. Completing A-1, saving its progress, later missions, and ScareScraper still need testing. The port uses a replacement system font.

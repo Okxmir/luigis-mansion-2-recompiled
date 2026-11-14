@@ -6,8 +6,9 @@ On Ubuntu 24.04, install the build dependencies. You need an x86-64 Linux system
 
 ```bash
 sudo apt install build-essential cmake ninja-build pkg-config python3-pil python3-png python3-cryptography \
-  libssl-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev \
-  libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev libvulkan-dev
+  libssl-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev libxss-dev libxtst-dev \
+  libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev \
+  libasound2-dev libpulse-dev libvulkan-dev
 ```
 
 Install a recent Rust toolchain with [rustup](https://rustup.rs/) and confirm that `cargo --version` works in the same terminal.
@@ -19,7 +20,11 @@ bash scripts/build_linux.sh --cartridge "/path/to/LM2-EUR.3ds"
 ./dist/linux-x64/LuigisMansion2
 ```
 
-The script also accepts a compatible decrypted `.cxi`. For supported encrypted images, add `--key-file /path/to/slot0x2c.key`. Linux uses Vulkan by default and SDL presentation in software mode. Its settings and saves are in `dist/linux-x64/userdata` unless you set `LGM2_DATA_DIR`.
+The script also accepts a compatible decrypted `.cxi`. For supported encrypted images, add `--key-file /path/to/slot0x2c.key`. Settings and saves are in `dist/linux-x64/userdata` unless you set `LGM2_DATA_DIR`.
+
+Linux uses Vulkan by default. To try the software renderer for one session, run `LGM2_CPU_PICA=1 ./dist/linux-x64/LuigisMansion2`. To measure the frame rate, run `YW2_FPS=1 ./dist/linux-x64/LuigisMansion2` and read the `fps:` lines in the terminal. Each line measures new top-screen frames over about five seconds.
+
+On other x86-64 distributions, install the equivalent development packages and compile locally against that distribution's libraries. Ubuntu's package names are used in the example above.
 
 ## Building for Windows x64
 
