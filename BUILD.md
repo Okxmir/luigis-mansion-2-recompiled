@@ -5,7 +5,7 @@
 On Ubuntu 24.04, install the build dependencies. You need an x86-64 Linux system, a C++20 compiler with `std::format` support, CMake 3.24 or newer, Python 3.11 or newer, and Rust 1.85 or newer.
 
 ```bash
-sudo apt install build-essential cmake ninja-build python3-pil python3-png python3-cryptography \
+sudo apt install build-essential cmake ninja-build pkg-config python3-pil python3-png python3-cryptography \
   libssl-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev \
   libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev libvulkan-dev
 ```
