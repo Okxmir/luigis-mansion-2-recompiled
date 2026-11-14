@@ -4,7 +4,7 @@ Our discord : https://discord.gg/4DcKGJT4aW
 
 An experimental community port of **Luigi’s Mansion 2** for Windows and Linux x64. The project translates the European 3DS release’s ARM and Thumb code (`CTR-P-AGGP`) into native code and loads assets from a local copy of the cartridge.
 
-**You need your own European cartridge image.** This repository provides the port’s source code and the tools to build it locally. Keep the cartridge image, extracted assets, and recompiled executable on your PC.
+Download the package for your system from [Releases](https://github.com/Okxmir/luigis-mansion-2-recompiled/releases). To compile the port yourself, use the source build kit and your own European cartridge image.
 
 ## Build and run
 
@@ -48,6 +48,6 @@ The save checksum test runs the recompiled ARM function and compares its output 
 
 Bug reports and code contributions are welcome. When reporting a gameplay issue, include the mission or screen, your operating system, the renderer, and steps to reproduce it. Keep game data, keys, and save files private.
 
-Generated code, executables containing that code, and extracted assets belong in the local project folder. The tools store analysis and test outputs in `extracted/`, `generated/`, `build/`, and `logs/`.
+The tools store generated code, extracted files, and test outputs in local folders such as `extracted/`, `generated/`, `build/`, and `logs/`.
 
 [MIT license for the port](LICENSE) · [Clockwork license](licenses/Clockwork.txt)

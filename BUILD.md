@@ -109,3 +109,5 @@ Vulkan reads supported interleaved vertex buffers directly. Set `LGM2_UNPACK_VER
 GitHub Actions compiles and tests the native runtime for every enabled platform on each push to `main`. The CI build uses a synthetic entry table. A playable build and its cartridge-based tests run locally with your own image.
 
 To release, raise the number in `VERSION` and push the change to `main`. After all platform jobs pass on the new commit, GitHub publishes Windows x64 and Linux x64 source build kits under the new tag. Ordinary commits leave the existing version and release unchanged.
+
+To prepare playable release archives, run the regular local Release build on each platform. On Windows, also run `scripts/package.ps1`. Run `python tools/package_playable.py --rar "/path/to/rar"` on each system with the RAR command installed. The packager writes `Luigis-Mansion-2-Windows-x64-v<version>.rar` or `Luigis-Mansion-2-Linux-x64-v<version>.rar` under `dist/releases`. Extract each archive into a fresh folder, check its game launcher, and attach the two archives to the corresponding release.
